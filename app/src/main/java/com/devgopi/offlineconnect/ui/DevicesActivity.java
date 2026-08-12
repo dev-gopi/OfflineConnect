@@ -122,6 +122,9 @@ public final class DevicesActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 for (RecentDeviceEntity entity : recent) {
                     Device item = entity.toDevice();
+                    // Wi-Fi Direct addresses can rotate for privacy. Require a fresh scan so a
+                    // recent address is never mistaken for a currently reachable peer.
+                    if (item.getTransport() == Device.Transport.WIFI_DIRECT) continue;
                     if (!devices.contains(item)) devices.add(item);
                 }
                 adapter.notifyDataSetChanged();
@@ -142,7 +145,7 @@ public final class DevicesActivity extends AppCompatActivity {
             String state = item.isConnected() ? getString(R.string.connected)
                     : getString(R.string.connection_ready);
             ((TextView) row.findViewById(R.id.txtDeviceTransport)).setText(
-                    getString(transport) + " · " + state);
+                    getString(R.string.device_transport_state, getString(transport), state));
             return row;
         }
     }

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/mediaViewerRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -29,8 +30,10 @@
         android:layout_margin="12dp"
         android:background="@drawable/bg_media_action"
         android:contentDescription="@string/close"
+        android:elevation="8dp"
         android:padding="@dimen/icon_padding"
-        android:src="@drawable/ic_back" />
+        android:src="@drawable/ic_back"
+        app:tint="@color/on_primary" />
 
     <ImageButton
         android:id="@+id/btnSaveFullscreenMedia"
@@ -40,7 +43,9 @@
         android:layout_margin="12dp"
         android:background="@drawable/bg_media_action"
         android:contentDescription="@string/save_media"
+        android:elevation="8dp"
         android:padding="@dimen/icon_padding"
         android:src="@drawable/ic_download"
-        android:visibility="gone" />
+        android:visibility="gone"
+        app:tint="@color/on_primary" />
 </FrameLayout>

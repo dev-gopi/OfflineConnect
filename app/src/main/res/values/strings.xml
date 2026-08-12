@@ -53,9 +53,11 @@
     <string name="back">Back</string>
     <string name="connecting">Connecting…</string>
     <string name="connected">Connected</string>
+    <string name="typing">Typing…</string>
     <string name="stop_scan">Stop scanning</string>
     <string name="bluetooth_transport">Bluetooth</string>
     <string name="wifi_direct_transport">Wi‑Fi Direct</string>
+    <string name="device_transport_state">%1$s · %2$s</string>
     <string name="device_details">Device details</string>
     <string name="device_details_format">Model: %1$s\nAndroid: %2$s\nOffline Connect is ready for local discovery.</string>
     <string name="close">Close</string>
@@ -87,6 +89,9 @@
     <string name="wifi_message_server_failed">Wi‑Fi message server failed.</string>
     <string name="wifi_message_channel_failed">Could not open the Wi‑Fi Direct message channel.</string>
     <string name="wifi_connection_lost">Wi‑Fi Direct connection was lost.</string>
+    <string name="wifi_connection_timeout">Wi‑Fi Direct connection timed out. Keep this chat open on both phones, scan again, and retry.</string>
+    <string name="wifi_device_address_invalid">This Wi‑Fi Direct device address is no longer valid. Scan again.</string>
+    <string name="location_services_required">Turn on Location services to discover Wi‑Fi Direct devices on this Android version.</string>
 
     <!-- Shared transport errors. -->
     <string name="not_connected">Not connected.</string>
@@ -124,6 +129,10 @@
     <string name="media_save_failed">Unable to save this media.</string>
     <string name="media_prepare_failed">Unable to prepare this attachment.</string>
     <string name="video_too_large">Video must be 16 MB or smaller after compression.</string>
+    <string name="compressing_media">Compressing attachment…</string>
+    <string name="sending_message">Sending…</string>
+    <string name="waiting_to_send">Waiting for connection…</string>
+    <string name="transfer_progress_format">%1$s %2$d%%</string>
     <string name="edited_indicator">Edited</string>
     <string name="play_video">Play video</string>
     <string name="clear_search">Clear search</string>
@@ -137,7 +146,11 @@
     <string name="shared_location">Shared location</string>
     <string name="open_location">Open in maps</string>
     <string name="call_contact">Call %1$s</string>
+    <string name="call_contact_action">Call</string>
     <string name="add_contact">Add to contacts</string>
+    <string name="dialer_unavailable">No phone app is available on this device.</string>
+    <string name="contacts_app_unavailable">No contacts app is available on this device.</string>
+    <string name="maps_app_unavailable">No maps or browser app is available on this device.</string>
     <string name="contact_phone_missing">The selected contact has no usable phone number.</string>
     <string name="location_share_title">Share current location?</string>
     <string name="location_share_privacy">Your precise coordinates will be sent to this device and stored in the encrypted chat history.</string>
@@ -150,8 +163,11 @@
     <string name="recent_device">Recent · %1$s</string>
     <string name="syncing_messages">Synchronizing messages…</string>
     <string name="emoji">Emoji</string>
+    <string name="emoji_keyboard">Choose emoji</string>
+    <string name="emoji_backspace">Delete previous character</string>
     <string name="playback_failed">Unable to play this voice message.</string>
     <string name="voice_time_format">%1$s / %2$s</string>
+    <string name="duration_zero">0:00</string>
     <string name="playback_speed">Playback speed %1$s</string>
     <string name="copy_message">Copy message</string>
     <string name="message_copied">Message copied</string>

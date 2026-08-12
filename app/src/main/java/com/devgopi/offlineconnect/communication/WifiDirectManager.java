@@ -12,6 +12,8 @@ import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.net.wifi.WifiManager;
+import android.location.LocationManager;
+import android.provider.Settings;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -28,6 +30,10 @@ import java.net.InetAddress;
 public final class WifiDirectManager implements AutoCloseable {
     private static final int MAX_BUSY_RETRIES = 2;
     private static final long BUSY_RETRY_DELAY_MS = 1_200L;
+    private static final int MAX_CONNECT_RETRIES = 3;
+    private static final long CONNECT_RETRY_DELAY_MS = 1_000L;
+    private static final long CONNECTION_TIMEOUT_MS = 30_000L;
+    private static final int CONNECTION_INFO_RETRIES = 5;
     public interface Listener {
         void onDeviceFound(Device device);
         void onConnectionChanged(boolean connected);
@@ -43,6 +49,8 @@ public final class WifiDirectManager implements AutoCloseable {
     private final Listener listener;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private boolean receiverRegistered;
+    private String pendingDeviceAddress;
+    private int connectionGeneration;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context ignored, Intent intent) {
@@ -52,7 +60,10 @@ public final class WifiDirectManager implements AutoCloseable {
             } else if (WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION.equals(action)) {
                 boolean connected = isConnected(intent);
                 listener.onConnectionChanged(connected);
-                if (connected) requestConnectionInfo();
+                if (connected) {
+                    clearConnectionTimeout();
+                    requestConnectionInfo(CONNECTION_INFO_RETRIES);
+                }
             } else if (WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION.equals(action)) {
                 int state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE,
                         WifiP2pManager.WIFI_P2P_STATE_DISABLED);
@@ -98,7 +109,7 @@ public final class WifiDirectManager implements AutoCloseable {
         registerReceiver();
         // A group may already exist before this chat opens; query it immediately instead of
         // relying only on a future broadcast from the vendor Wi-Fi implementation.
-        requestConnectionInfo();
+        requestConnectionInfo(CONNECTION_INFO_RETRIES);
     }
 
     @SuppressLint("MissingPermission")
@@ -128,11 +139,48 @@ public final class WifiDirectManager implements AutoCloseable {
     public void connect(String deviceAddress) {
         if (!ready()) return;
         registerReceiver();
-        WifiP2pConfig config = new WifiP2pConfig();
-        config.deviceAddress = deviceAddress;
+        if (deviceAddress == null || deviceAddress.trim().isEmpty()) {
+            listener.onError(context.getString(R.string.wifi_device_address_invalid));
+            return;
+        }
+        pendingDeviceAddress = deviceAddress;
+        int generation = ++connectionGeneration;
         try {
-            manager.connect(channel, config,
-                    action(context.getString(R.string.wifi_connection_request), false));
+            manager.stopPeerDiscovery(channel, new WifiP2pManager.ActionListener() {
+                @Override public void onSuccess() { connectAttempt(generation, 0); }
+                @Override public void onFailure(int reason) { connectAttempt(generation, 0); }
+            });
+        } catch (SecurityException exception) {
+            listener.onError(context.getString(R.string.nearby_permission_revoked));
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private void connectAttempt(int generation, int attempt) {
+        if (generation != connectionGeneration || pendingDeviceAddress == null || !ready()) return;
+        WifiP2pConfig config = new WifiP2pConfig();
+        config.deviceAddress = pendingDeviceAddress;
+        // A neutral intent lets Android deterministically negotiate the owner between phones.
+        config.groupOwnerIntent = 7;
+        try {
+            manager.connect(channel, config, new WifiP2pManager.ActionListener() {
+                @Override public void onSuccess() {
+                    scheduleConnectionTimeout(generation);
+                }
+                @Override public void onFailure(int reason) {
+                    if ((reason == WifiP2pManager.BUSY || reason == WifiP2pManager.ERROR)
+                            && attempt + 1 < MAX_CONNECT_RETRIES) {
+                        cancelConnectQuietly();
+                        mainHandler.postDelayed(() -> connectAttempt(generation, attempt + 1),
+                                CONNECT_RETRY_DELAY_MS);
+                        return;
+                    }
+                    pendingDeviceAddress = null;
+                    listener.onError(context.getString(R.string.wifi_operation_failed,
+                            context.getString(R.string.wifi_connection_request),
+                            reasonMessage(reason)));
+                }
+            });
         } catch (SecurityException exception) {
             listener.onError(context.getString(R.string.nearby_permission_revoked));
         }
@@ -156,7 +204,24 @@ public final class WifiDirectManager implements AutoCloseable {
             return false;
         }
         if (!hasPermission()) { listener.onError(context.getString(R.string.nearby_permission_required)); return false; }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU && !isLocationEnabled()) {
+            listener.onError(context.getString(R.string.location_services_required));
+            return false;
+        }
         return true;
+    }
+
+    private boolean isLocationEnabled() {
+        LocationManager location = ContextCompat.getSystemService(context, LocationManager.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return location != null && location.isLocationEnabled();
+        }
+        try {
+            return Settings.Secure.getInt(context.getContentResolver(),
+                    Settings.Secure.LOCATION_MODE) != Settings.Secure.LOCATION_MODE_OFF;
+        } catch (Settings.SettingNotFoundException exception) {
+            return false;
+        }
     }
 
     private void registerReceiver() {
@@ -186,17 +251,46 @@ public final class WifiDirectManager implements AutoCloseable {
     }
 
     @SuppressLint("MissingPermission")
-    private void requestConnectionInfo() {
+    private void requestConnectionInfo(int retriesRemaining) {
         if (!ready()) return;
         try {
             manager.requestConnectionInfo(channel, info -> {
                 if (info.groupFormed && info.groupOwnerAddress != null) {
+                    pendingDeviceAddress = null;
                     listener.onConnectionReady(info.groupOwnerAddress, info.isGroupOwner);
+                } else if (info.groupFormed && retriesRemaining > 0) {
+                    mainHandler.postDelayed(() -> requestConnectionInfo(retriesRemaining - 1),
+                            500L);
                 }
             });
         } catch (SecurityException exception) {
             listener.onError(context.getString(R.string.nearby_permission_revoked));
         }
+    }
+
+    @SuppressLint("MissingPermission")
+    private void cancelConnectQuietly() {
+        try {
+            manager.cancelConnect(channel, new WifiP2pManager.ActionListener() {
+                @Override public void onSuccess() { }
+                @Override public void onFailure(int reason) { }
+            });
+        } catch (SecurityException ignored) { }
+    }
+
+    private void scheduleConnectionTimeout(int generation) {
+        mainHandler.postDelayed(() -> {
+            if (generation != connectionGeneration || pendingDeviceAddress == null) return;
+            pendingDeviceAddress = null;
+            cancelConnectQuietly();
+            listener.onConnectionChanged(false);
+            listener.onError(context.getString(R.string.wifi_connection_timeout));
+        }, CONNECTION_TIMEOUT_MS);
+    }
+
+    private void clearConnectionTimeout() {
+        connectionGeneration++;
+        pendingDeviceAddress = null;
     }
 
     private WifiP2pManager.ActionListener action(String successMessage, boolean discovery) {
@@ -235,6 +329,8 @@ public final class WifiDirectManager implements AutoCloseable {
     }
 
     @Override public void close() {
+        connectionGeneration++;
+        pendingDeviceAddress = null;
         mainHandler.removeCallbacksAndMessages(null);
         stopDiscovery();
         if (receiverRegistered) {

@@ -14,9 +14,9 @@
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="12dp"
-        android:paddingTop="10dp"
+        android:paddingTop="8dp"
         android:paddingEnd="10dp"
-        android:paddingBottom="10dp">
+        android:paddingBottom="8dp">
 
         <ImageButton
             android:id="@+id/btnBackChat"
@@ -41,17 +41,17 @@
                 android:ellipsize="end"
                 android:maxLines="1"
                 android:textColor="@color/text_primary"
-                android:textSize="20sp"
+                android:textSize="18sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/txtConnectionStatus"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="5dp"
+                android:layout_marginTop="3dp"
                 android:text="@string/disconnected"
                 android:textColor="@color/text_secondary"
-                android:textSize="14sp" />
+                android:textSize="13sp" />
         </LinearLayout>
 
         <Button
@@ -59,11 +59,12 @@
             style="@style/Widget.OfflineConnect.SecondaryButton"
             android:layout_width="wrap_content"
             android:layout_height="@dimen/control_height"
-            android:layout_marginStart="8dp"
-            android:minWidth="88dp"
-            android:paddingStart="14dp"
-            android:paddingEnd="14dp"
-            android:text="@string/connect" />
+            android:layout_marginStart="4dp"
+            android:minWidth="76dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:text="@string/connect"
+            android:textSize="13sp" />
 
         <ImageButton
             android:id="@+id/btnChatMenu"
@@ -148,51 +149,57 @@
             android:visibility="gone" />
     </LinearLayout>
 
-    <ScrollView
-        android:id="@+id/scrollMessages"
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:clipToPadding="false"
-        android:focusable="false"
-        android:focusableInTouchMode="false"
-        android:fillViewport="true"
-        android:paddingStart="12dp"
-        android:paddingTop="10dp"
-        android:paddingEnd="12dp"
-        android:paddingBottom="8dp">
+        android:layout_weight="1">
 
-        <LinearLayout
-            android:id="@+id/messageContainer"
+        <ScrollView
+            android:id="@+id/scrollMessages"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_horizontal"
-            android:orientation="vertical">
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:fillViewport="true"
+            android:focusable="false"
+            android:focusableInTouchMode="false"
+            android:paddingStart="12dp"
+            android:paddingTop="10dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="64dp">
 
-            <TextView
-                android:id="@+id/txtConversationEmpty"
-                style="@style/TextAppearance.OfflineConnect.Body"
+            <LinearLayout
+                android:id="@+id/messageContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="72dp"
-                android:gravity="center"
-                android:padding="24dp"
-                android:text="@string/conversation_empty" />
-        </LinearLayout>
-    </ScrollView>
+                android:gravity="center_horizontal"
+                android:orientation="vertical">
 
-    <ImageButton
-        android:id="@+id/btnScrollBottom"
-        android:layout_width="@dimen/touch_target"
-        android:layout_height="@dimen/touch_target"
-        android:layout_gravity="center_horizontal"
-        android:layout_marginBottom="4dp"
-        android:background="@drawable/bg_scroll_to_bottom"
-        android:contentDescription="@string/scroll_to_latest"
-        android:elevation="2dp"
-        android:padding="@dimen/icon_padding_compact"
-        android:src="@drawable/ic_arrow_down"
-        android:visibility="gone" />
+                <TextView
+                    android:id="@+id/txtConversationEmpty"
+                    style="@style/TextAppearance.OfflineConnect.Body"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="72dp"
+                    android:gravity="center"
+                    android:padding="24dp"
+                    android:text="@string/conversation_empty" />
+            </LinearLayout>
+        </ScrollView>
+
+        <ImageButton
+            android:id="@+id/btnScrollBottom"
+            android:layout_width="@dimen/touch_target"
+            android:layout_height="@dimen/touch_target"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/bg_scroll_to_bottom"
+            android:contentDescription="@string/scroll_to_latest"
+            android:elevation="1dp"
+            android:padding="@dimen/icon_padding_compact"
+            android:src="@drawable/ic_arrow_down"
+            android:visibility="gone" />
+
+    </FrameLayout>
 
     <LinearLayout
         android:id="@+id/chatComposer"
@@ -258,7 +265,7 @@
                         android:id="@+id/txtRecordingTimer"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="0:00"
+                        android:text="@string/duration_zero"
                         android:textColor="#B42318"
                         android:textSize="17sp"
                         android:textStyle="bold" />

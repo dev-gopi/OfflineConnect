@@ -16,6 +16,7 @@ import android.widget.VideoView;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 
 import com.devgopi.offlineconnect.R;
@@ -39,6 +40,7 @@ public final class MediaViewerActivity extends AppCompatActivity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        configureDarkSystemBars();
         setContentView(R.layout.activity_media_viewer);
         applyInsets();
 
@@ -72,6 +74,15 @@ public final class MediaViewerActivity extends AppCompatActivity {
             image.setVisibility(View.VISIBLE);
             image.setImageURI(Uri.fromFile(new File(path)));
         }
+    }
+
+    private void configureDarkSystemBars() {
+        getWindow().setStatusBarColor(android.graphics.Color.BLACK);
+        getWindow().setNavigationBarColor(android.graphics.Color.BLACK);
+        WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView())
+                .setAppearanceLightStatusBars(false);
+        WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView())
+                .setAppearanceLightNavigationBars(false);
     }
 
     private void applyInsets() {

@@ -17,6 +17,8 @@ public final class ConnectionManager implements AutoCloseable {
         void onMessageReceived(Message message);
         void onMessageDeleted(String messageId);
         void onReceipt(String messageId, Message.Status status);
+        void onSendProgress(String messageId, int percent);
+        void onTypingChanged(boolean typing);
         void onSendFailed(String messageId, String reason);
         void onError(String message);
     }
@@ -60,6 +62,12 @@ public final class ConnectionManager implements AutoCloseable {
             @Override public void onReceipt(String messageId, Message.Status status) {
                 listener.onReceipt(messageId, status);
             }
+            @Override public void onSendProgress(String messageId, int percent) {
+                listener.onSendProgress(messageId, percent);
+            }
+            @Override public void onTypingChanged(boolean typing) {
+                listener.onTypingChanged(typing);
+            }
             @Override public void onSendFailed(String messageId, String reason) {
                 listener.onSendFailed(messageId, reason);
             }
@@ -77,6 +85,12 @@ public final class ConnectionManager implements AutoCloseable {
             }
             @Override public void onReceipt(String messageId, Message.Status status) {
                 listener.onReceipt(messageId, status);
+            }
+            @Override public void onSendProgress(String messageId, int percent) {
+                listener.onSendProgress(messageId, percent);
+            }
+            @Override public void onTypingChanged(boolean typing) {
+                listener.onTypingChanged(typing);
             }
             @Override public void onSendFailed(String messageId, String reason) {
                 listener.onSendFailed(messageId, reason);
@@ -124,6 +138,16 @@ public final class ConnectionManager implements AutoCloseable {
             bluetooth.sendDeletion(messageId);
         } else {
             wifiMessages.sendDeletion(messageId);
+        }
+    }
+
+    /** Typing presence is ephemeral and is never queued when disconnected. */
+    public void sendTyping(boolean typing) {
+        if (activeDevice == null || state != State.CONNECTED) return;
+        if (activeDevice.getTransport() == Device.Transport.BLUETOOTH) {
+            bluetooth.sendTyping(typing);
+        } else {
+            wifiMessages.sendTyping(typing);
         }
     }
 

@@ -6,6 +6,7 @@ import android.content.pm.PackageManager;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ContentValues;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Bitmap;
@@ -13,6 +14,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.Drawable;
 import android.media.MediaPlayer;
 import android.media.MediaRecorder;
 import android.os.Build;
@@ -31,6 +33,7 @@ import android.text.Spanned;
 import android.text.TextWatcher;
 import android.text.style.BackgroundColorSpan;
 import android.util.Log;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -40,8 +43,9 @@ import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.FrameLayout;
+import android.widget.GridLayout;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -87,6 +91,7 @@ import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+
 /** Chat UI with text messages, hold-to-record voice notes, and receipt states. */
 public final class ChatActivity extends AppCompatActivity {
     public static final String EXTRA_DEVICE = "com.devgopi.offlineconnect.DEVICE";
@@ -96,10 +101,13 @@ public final class ChatActivity extends AppCompatActivity {
     private static final String VIDEO_PREFIX = "video://";
     private static final String CONTACT_PREFIX = "contact://";
     private static final String LOCATION_PREFIX = "location://";
+    private static final String PREPARING_MEDIA_PREFIX = "preparing-media://";
     private static final long MAX_MEDIA_BYTES = 16L * 1024L * 1024L;
     private static final float CANCEL_DISTANCE_DP = 90f;
     private static final int HISTORY_PAGE_SIZE = 40;
     private static final long LOCATION_TIMEOUT_MS = 12_000L;
+    private static final long TYPING_IDLE_TIMEOUT_MS = 1_500L;
+    private static final long REMOTE_TYPING_TIMEOUT_MS = 3_500L;
 
     private final ExecutorService databaseExecutor = Executors.newSingleThreadExecutor();
     private final Map<String, View> messageViews = new HashMap<>();
@@ -140,6 +148,11 @@ public final class ChatActivity extends AppCompatActivity {
     private boolean locating;
     private final android.os.Handler locationHandler = new android.os.Handler(
             android.os.Looper.getMainLooper());
+    private final android.os.Handler typingHandler = new android.os.Handler(
+            android.os.Looper.getMainLooper());
+    private boolean typingSent;
+    private final Runnable stopLocalTyping = () -> setLocalTyping(false);
+    private final Runnable clearRemoteTyping = this::restoreConnectionLabel;
     private enum MessageViewFilter { ALL, STARRED, PINNED }
     private Device device;
     private MediaRecorder recorder;
@@ -182,7 +195,6 @@ public final class ChatActivity extends AppCompatActivity {
                 else Toast.makeText(this, R.string.location_permission_required,
                         Toast.LENGTH_LONG).show();
             });
-
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_chat);
@@ -256,6 +268,11 @@ public final class ChatActivity extends AppCompatActivity {
         findViewById(R.id.btnBackChat).setOnClickListener(view -> finish());
         connectionManager = new ConnectionManager(this, new ConnectionManager.Listener() {
             @Override public void onStateChanged(ConnectionManager.State state) {
+                typingHandler.removeCallbacks(clearRemoteTyping);
+                if (state != ConnectionManager.State.CONNECTED) {
+                    typingSent = false;
+                    typingHandler.removeCallbacks(stopLocalTyping);
+                }
                 int label = state == ConnectionManager.State.CONNECTED ? R.string.connected
                         : state == ConnectionManager.State.CONNECTING ? R.string.connecting
                         : R.string.disconnected;
@@ -264,6 +281,8 @@ public final class ChatActivity extends AppCompatActivity {
                         ? R.string.connected : state == ConnectionManager.State.CONNECTING
                         ? R.string.connecting : R.string.connect);
                 connectButton.setEnabled(state == ConnectionManager.State.DISCONNECTED);
+                connectButton.setVisibility(state == ConnectionManager.State.CONNECTED
+                        ? View.GONE : View.VISIBLE);
                 setComposerEnabled(state == ConnectionManager.State.CONNECTED);
                 if (state == ConnectionManager.State.CONNECTED) synchronizeMessages();
             }
@@ -281,6 +300,18 @@ public final class ChatActivity extends AppCompatActivity {
             }
             @Override public void onReceipt(String messageId, Message.Status status) {
                 updateMessageStatus(messageId, status);
+            }
+            @Override public void onSendProgress(String messageId, int percent) {
+                updateTransferProgress(messageId, percent, false);
+            }
+            @Override public void onTypingChanged(boolean typing) {
+                typingHandler.removeCallbacks(clearRemoteTyping);
+                if (typing && connectionManager.getState() == ConnectionManager.State.CONNECTED) {
+                    connectionStatus.setText(R.string.typing);
+                    typingHandler.postDelayed(clearRemoteTyping, REMOTE_TYPING_TIMEOUT_MS);
+                } else {
+                    restoreConnectionLabel();
+                }
             }
             @Override public void onSendFailed(String messageId, String reason) {
                 updateMessageStatus(messageId, Message.Status.FAILED);
@@ -308,34 +339,90 @@ public final class ChatActivity extends AppCompatActivity {
         });
         searchPreviousButton.setOnClickListener(view -> moveToSearchMatch(-1));
         searchNextButton.setOnClickListener(view -> moveToSearchMatch(1));
-        findViewById(R.id.btnEmoji).setOnClickListener(view -> {
-            String[] emoji = {"😀", "😂", "❤️", "👍", "🙏", "🎉", "😢", "🔥"};
-            new AlertDialog.Builder(this, R.style.ThemeOverlay_OfflineConnect_Dialog)
-                    .setTitle(R.string.emoji)
-                    .setItems(emoji, (dialog, which) -> {
-                        int start = Math.max(0, messageInput.getSelectionStart());
-                        messageInput.getText().insert(start, emoji[which]);
-                    }).show();
-        });
+        findViewById(R.id.btnEmoji).setOnClickListener(view -> showEmojiKeyboard());
+    }
+
+    /** Displays a reusable emoji grid instead of a single-choice dialog list. */
+    private void showEmojiKeyboard() {
+        GridLayout keys = new GridLayout(this);
+        keys.setColumnCount(7);
+        keys.setAlignmentMode(GridLayout.ALIGN_BOUNDS);
+        int horizontalPadding = dp(8);
+        keys.setPadding(horizontalPadding, dp(4), horizontalPadding, dp(8));
+
+        TypedValue selectableBackground = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless,
+                selectableBackground, true);
+        for (String emoji : getResources().getStringArray(R.array.chat_emoji)) {
+            TextView key = new TextView(this);
+            key.setText(emoji);
+            key.setTextSize(24f);
+            key.setGravity(Gravity.CENTER);
+            key.setContentDescription(emoji);
+            key.setBackgroundResource(selectableBackground.resourceId);
+            key.setOnClickListener(view -> insertAtCursor(emoji));
+            keys.addView(key, new GridLayout.LayoutParams(
+                    GridLayout.spec(GridLayout.UNDEFINED, 1f),
+                    GridLayout.spec(GridLayout.UNDEFINED, 1f)) {{
+                        width = 0;
+                        height = dp(48);
+                    }});
+        }
+
+        ImageButton backspace = new ImageButton(this);
+        backspace.setImageResource(R.drawable.ic_backspace);
+        backspace.setColorFilter(ContextCompat.getColor(this, R.color.text_secondary));
+        backspace.setBackgroundResource(selectableBackground.resourceId);
+        backspace.setContentDescription(getString(R.string.emoji_backspace));
+        backspace.setPadding(dp(13), dp(13), dp(13), dp(13));
+        backspace.setOnClickListener(view -> deleteBeforeCursor());
+        keys.addView(backspace, new GridLayout.LayoutParams(
+                GridLayout.spec(GridLayout.UNDEFINED, 1f),
+                GridLayout.spec(GridLayout.UNDEFINED, 1f)) {{
+                    width = 0;
+                    height = dp(48);
+                }});
+
+        ScrollView scroller = new ScrollView(this);
+        scroller.setClipToPadding(false);
+        scroller.addView(keys);
+        scroller.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(288)));
+
+        new AlertDialog.Builder(this, R.style.ThemeOverlay_OfflineConnect_Dialog)
+                .setTitle(R.string.emoji_keyboard)
+                .setView(scroller)
+                .setNegativeButton(R.string.close, null)
+                .show();
+    }
+
+    private void insertAtCursor(String value) {
+        Editable text = messageInput.getText();
+        int cursor = messageInput.getSelectionStart();
+        text.insert(cursor >= 0 ? cursor : text.length(), value);
+    }
+
+    private void deleteBeforeCursor() {
+        Editable text = messageInput.getText();
+        int cursor = messageInput.getSelectionStart();
+        if (cursor <= 0 || text.length() == 0) return;
+        int previous = Character.offsetByCodePoints(text, cursor, -1);
+        text.delete(previous, cursor);
     }
 
     private void configureChatMenu() {
         findViewById(R.id.btnChatMenu).setOnClickListener(anchor -> {
-            PopupMenu popup = new PopupMenu(this, anchor);
-            popup.getMenu().add(0, 1, 0, R.string.view_all_messages).setCheckable(true);
-            popup.getMenu().add(0, 2, 1, R.string.view_starred_messages).setCheckable(true);
-            popup.getMenu().add(0, 3, 2, R.string.view_pinned_messages).setCheckable(true);
-            int checked = messageViewFilter == MessageViewFilter.ALL ? 1
-                    : messageViewFilter == MessageViewFilter.STARRED ? 2 : 3;
-            popup.getMenu().findItem(checked).setChecked(true);
-            popup.setOnMenuItemClickListener(item -> {
-                messageViewFilter = item.getItemId() == 2 ? MessageViewFilter.STARRED
-                        : item.getItemId() == 3 ? MessageViewFilter.PINNED
-                        : MessageViewFilter.ALL;
+            List<String> labels = java.util.Arrays.asList(
+                    getString(R.string.view_all_messages),
+                    getString(R.string.view_starred_messages),
+                    getString(R.string.view_pinned_messages));
+            List<Integer> icons = java.util.Arrays.asList(R.drawable.ic_messages,
+                    R.drawable.ic_star, R.drawable.ic_pin);
+            showIconActionDialog(R.string.chat_options, labels, icons, selected -> {
+                messageViewFilter = selected == 1 ? MessageViewFilter.STARRED
+                        : selected == 2 ? MessageViewFilter.PINNED : MessageViewFilter.ALL;
                 rebuildSearchResults(searchInput.getText().toString(), true);
-                return true;
             });
-            popup.show();
         });
     }
 
@@ -481,6 +568,7 @@ public final class ChatActivity extends AppCompatActivity {
             @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence text, int start, int before, int count) {
                 updateComposerIcon();
+                updateLocalTyping(text);
             }
             @Override public void afterTextChanged(Editable editable) { }
         });
@@ -497,6 +585,23 @@ public final class ChatActivity extends AppCompatActivity {
         sendButton.setImageResource(hasText ? R.drawable.ic_send : R.drawable.ic_mic);
         sendButton.setContentDescription(getString(hasText
                 ? R.string.send_message : R.string.record_voice));
+    }
+
+    private void updateLocalTyping(CharSequence text) {
+        typingHandler.removeCallbacks(stopLocalTyping);
+        boolean hasText = text.toString().trim().length() > 0;
+        if (hasText && connectionManager.getState() == ConnectionManager.State.CONNECTED) {
+            setLocalTyping(true);
+            typingHandler.postDelayed(stopLocalTyping, TYPING_IDLE_TIMEOUT_MS);
+        } else {
+            setLocalTyping(false);
+        }
+    }
+
+    private void setLocalTyping(boolean typing) {
+        if (typingSent == typing || connectionManager == null) return;
+        typingSent = typing;
+        connectionManager.sendTyping(typing);
     }
 
     private boolean handleRecordingGesture(MotionEvent event) {
@@ -610,6 +715,7 @@ public final class ChatActivity extends AppCompatActivity {
     private void sendText() {
         String text = messageInput.getText().toString().trim();
         if (text.isEmpty()) return;
+        setLocalTyping(false);
         messageInput.setText("");
         queueMessage(text);
     }
@@ -878,7 +984,10 @@ public final class ChatActivity extends AppCompatActivity {
             bubble.addView(marker);
         }
 
-        if (message.getBody().startsWith(VOICE_PREFIX)) {
+        boolean preparingMedia = message.getBody().startsWith(PREPARING_MEDIA_PREFIX);
+        if (preparingMedia) {
+            addTransferProgress(bubble, message.getId(), R.string.compressing_media, 0);
+        } else if (message.getBody().startsWith(VOICE_PREFIX)) {
             addVoiceContent(bubble, message.getBody().substring(VOICE_PREFIX.length()));
         } else if (message.getBody().startsWith(IMAGE_PREFIX)) {
             addImageContent(bubble, mediaPath(message.getBody()), message.isOutgoing());
@@ -900,8 +1009,16 @@ public final class ChatActivity extends AppCompatActivity {
             bubble.addView(body);
         }
 
-        addMessageFooter(bubble, message);
-        bindMessageLongPress(bubble, message);
+        if (!preparingMedia && message.isOutgoing()
+                && message.getStatus() == Message.Status.PENDING) {
+            int transferLabel = connectionManager.getState() == ConnectionManager.State.CONNECTED
+                    ? R.string.sending_message : R.string.waiting_to_send;
+            addTransferProgress(bubble, message.getId(), transferLabel, 0);
+        }
+        if (!preparingMedia) {
+            addMessageFooter(bubble, message);
+            bindMessageLongPress(bubble, message);
+        }
         bubble.setOnHoverListener((view, event) -> {
             if (event.getActionMasked() == MotionEvent.ACTION_HOVER_ENTER
                     && !message.getId().equals(selectedMessageId)) {
@@ -974,26 +1091,31 @@ public final class ChatActivity extends AppCompatActivity {
         boolean editable = message.isOutgoing() && text;
         List<String> actions = new ArrayList<>();
         List<Integer> actionIds = new ArrayList<>();
-        if (text) { actions.add(getString(R.string.copy_message)); actionIds.add(1); }
-        if (editable) { actions.add(getString(R.string.edit_message)); actionIds.add(2); }
+        List<Integer> icons = new ArrayList<>();
+        if (text) {
+            actions.add(getString(R.string.copy_message)); actionIds.add(1);
+            icons.add(R.drawable.ic_copy);
+        }
+        if (editable) {
+            actions.add(getString(R.string.edit_message)); actionIds.add(2);
+            icons.add(R.drawable.ic_edit);
+        }
         actions.add(getString(starredMessageIds.contains(message.getId())
                 ? R.string.unstar_message : R.string.star_message));
-        actionIds.add(3);
+        actionIds.add(3); icons.add(R.drawable.ic_star);
         actions.add(getString(pinnedMessageIds.contains(message.getId())
                 ? R.string.unpin_message : R.string.pin_message));
-        actionIds.add(4);
+        actionIds.add(4); icons.add(R.drawable.ic_pin);
         actions.add(getString(R.string.delete_message));
-        actionIds.add(5);
-        new AlertDialog.Builder(this, R.style.ThemeOverlay_OfflineConnect_Dialog)
-                .setTitle(R.string.message_actions)
-                .setItems(actions.toArray(new String[0]), (dialog, which) -> {
-                    int action = actionIds.get(which);
-                    if (action == 1) copyMessage(message);
-                    else if (action == 2) editMessage(message);
-                    else if (action == 3) toggleStarred(message);
-                    else if (action == 4) togglePinned(message);
-                    else deleteMessage(message);
-                }).show();
+        actionIds.add(5); icons.add(R.drawable.ic_delete);
+        showIconActionDialog(R.string.message_actions, actions, icons, which -> {
+            int action = actionIds.get(which);
+            if (action == 1) copyMessage(message);
+            else if (action == 2) editMessage(message);
+            else if (action == 3) toggleStarred(message);
+            else if (action == 4) togglePinned(message);
+            else deleteMessage(message);
+        });
     }
 
     private void toggleStarred(Message message) {
@@ -1111,37 +1233,119 @@ public final class ChatActivity extends AppCompatActivity {
         }
 
         if (message.getStatus() == Message.Status.FAILED && message.isOutgoing()) {
-            Button retry = new Button(this);
-            retry.setText(R.string.retry);
-            retry.setTextColor(ContextCompat.getColor(this, R.color.primary));
-            retry.setTextSize(12f);
-            retry.setAllCaps(false);
+            ImageButton retry = new ImageButton(this);
+            retry.setImageResource(R.drawable.ic_retry);
+            retry.setColorFilter(ContextCompat.getColor(this, R.color.primary));
             retry.setContentDescription(getString(R.string.retry_message));
             retry.setBackgroundColor(Color.TRANSPARENT);
-            retry.setMinHeight(dp(48));
-            retry.setMinWidth(dp(64));
+            retry.setPadding(dp(14), dp(14), dp(14), dp(14));
             retry.setOnClickListener(view -> retryMessage(message));
             LinearLayout.LayoutParams retryParams = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, dp(48));
-            retryParams.setMarginStart(dp(8));
+                    dp(48), dp(48));
+            retryParams.setMarginStart(dp(2));
             footer.addView(retry, retryParams);
         }
         bubble.addView(footer, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
     }
 
+    private void addTransferProgress(LinearLayout bubble, String messageId, int labelResource,
+                                     int initialProgress) {
+        TextView label = new TextView(this);
+        label.setText(getString(R.string.transfer_progress_format,
+                getString(labelResource), initialProgress));
+        label.setTag("transfer_label_" + messageId);
+        label.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
+        label.setTextSize(12f);
+        label.setPadding(0, dp(2), 0, dp(5));
+        bubble.addView(label);
+
+        ProgressBar progress = new ProgressBar(this, null,
+                android.R.attr.progressBarStyleHorizontal);
+        progress.setIndeterminate(false);
+        progress.setMax(100);
+        progress.setProgress(initialProgress);
+        progress.setTag("transfer_progress_" + messageId);
+        progress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(
+                ContextCompat.getColor(this, R.color.primary)));
+        progress.setContentDescription(getString(labelResource));
+        bubble.addView(progress, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(3)));
+    }
+
+    private void updateTransferProgress(String messageId, int percent, boolean compression) {
+        View bubble = messageViews.get(messageId);
+        if (bubble == null) return;
+        ProgressBar progress = bubble.findViewWithTag("transfer_progress_" + messageId);
+        TextView label = bubble.findViewWithTag("transfer_label_" + messageId);
+        if (progress != null) progress.setProgress(percent);
+        if (label != null) label.setText(getString(R.string.transfer_progress_format,
+                getString(compression ? R.string.compressing_media : R.string.sending_message),
+                percent));
+    }
+
     private void showAttachmentPicker() {
-        new AlertDialog.Builder(this, R.style.ThemeOverlay_OfflineConnect_Dialog)
-                .setTitle(R.string.choose_attachment)
-                .setItems(new String[]{getString(R.string.choose_image),
-                        getString(R.string.choose_video), getString(R.string.choose_contact),
-                        getString(R.string.share_location)}, (dialog, which) -> {
-                    if (which < 2) mediaPicker.launch(which == 0 ? "image/*" : "video/*");
-                    else if (which == 2) contactPicker.launch(new Intent(Intent.ACTION_PICK,
-                            ContactsContract.CommonDataKinds.Phone.CONTENT_URI));
-                    else confirmLocationShare();
-                })
-                .show();
+        List<String> actions = java.util.Arrays.asList(getString(R.string.choose_image),
+                getString(R.string.choose_video), getString(R.string.choose_contact),
+                getString(R.string.share_location));
+        List<Integer> icons = java.util.Arrays.asList(R.drawable.ic_image, R.drawable.ic_video,
+                R.drawable.ic_contact, R.drawable.ic_location);
+        showIconActionDialog(R.string.choose_attachment, actions, icons, which -> {
+            if (which < 2) mediaPicker.launch(which == 0 ? "image/*" : "video/*");
+            else if (which == 2) contactPicker.launch(new Intent(Intent.ACTION_PICK,
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI));
+            else confirmLocationShare();
+        });
+    }
+
+    private void showIconActionDialog(int title, List<String> labels, List<Integer> icons,
+                                      IconActionListener listener) {
+        LinearLayout menu = new LinearLayout(this);
+        menu.setOrientation(LinearLayout.VERTICAL);
+        menu.setPadding(dp(8), dp(4), dp(8), dp(8));
+        AlertDialog dialog = new AlertDialog.Builder(this,
+                R.style.ThemeOverlay_OfflineConnect_Dialog)
+                .setTitle(title)
+                .setView(menu)
+                .setNegativeButton(R.string.cancel, null)
+                .create();
+        TypedValue selectable = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, selectable, true);
+        for (int index = 0; index < labels.size(); index++) {
+            LinearLayout row = new LinearLayout(this);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setPadding(dp(16), 0, dp(16), 0);
+            row.setBackgroundResource(selectable.resourceId);
+            row.setContentDescription(labels.get(index));
+
+            ImageView icon = new ImageView(this);
+            icon.setImageResource(icons.get(index));
+            icon.setColorFilter(ContextCompat.getColor(this, R.color.primary));
+            row.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(24)));
+
+            TextView label = new TextView(this);
+            label.setText(labels.get(index));
+            label.setTextColor(ContextCompat.getColor(this, R.color.text_primary));
+            label.setTextSize(16f);
+            LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+            labelParams.setMarginStart(dp(18));
+            row.addView(label, labelParams);
+
+            final int selected = index;
+            row.setOnClickListener(view -> {
+                dialog.dismiss();
+                listener.onAction(selected);
+            });
+            menu.addView(row, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(56)));
+        }
+        dialog.show();
+    }
+
+    private interface IconActionListener {
+        void onAction(int index);
     }
 
     private void handleContactResult(ActivityResult result) {
@@ -1208,6 +1412,8 @@ public final class ChatActivity extends AppCompatActivity {
         locating = true;
         connectionStatus.setText(R.string.locating);
         locationHandler.removeCallbacksAndMessages(null);
+        setLocalTyping(false);
+        typingHandler.removeCallbacksAndMessages(null);
         locationHandler.postDelayed(() -> {
             if (!locating) return;
             locating = false;
@@ -1249,31 +1455,39 @@ public final class ChatActivity extends AppCompatActivity {
     }
 
     private void preparePickedMedia(Uri uri) {
+        String mime = getContentResolver().getType(uri);
+        boolean image = mime != null && mime.startsWith("image/");
+        Message preparing = new Message(null, device.getId(), PREPARING_MEDIA_PREFIX
+                + (image ? "image" : "video"), System.currentTimeMillis(), true,
+                Message.Status.PENDING);
+        showMessage(preparing);
+        updateTransferProgress(preparing.getId(), 5, true);
         databaseExecutor.execute(() -> {
-            String mime = getContentResolver().getType(uri);
-            boolean image = mime != null && mime.startsWith("image/");
             File destination = new File(getFilesDir(), (image ? "image_" : "video_")
                     + System.currentTimeMillis() + (image ? ".jpg" : ".mp4"));
             try {
+                runOnUiThread(() -> updateTransferProgress(preparing.getId(), 15, true));
                 if (image) compressImage(uri, destination);
                 else copyUri(uri, destination);
+                runOnUiThread(() -> updateTransferProgress(preparing.getId(), 85, true));
                 if (!destination.isFile() || destination.length() == 0
                         || destination.length() > MAX_MEDIA_BYTES) {
                     if (!destination.delete()) Log.w(TAG, "Could not remove oversized media");
-                    runOnUiThread(() -> Toast.makeText(this, image
-                            ? R.string.media_prepare_failed : R.string.video_too_large,
-                            Toast.LENGTH_LONG).show());
+                    runOnUiThread(() -> {
+                        removeTransientMessage(preparing.getId());
+                        Toast.makeText(this, image ? R.string.media_prepare_failed
+                                : R.string.video_too_large, Toast.LENGTH_LONG).show();
+                    });
                     return;
                 }
-                Message message = new Message(null, device.getId(), "", System.currentTimeMillis(),
-                        true, Message.Status.PENDING);
                 String thumbnail = MediaRepository.createThumbnail(destination.getAbsolutePath(),
                         !image);
-                String body = (image ? IMAGE_PREFIX : VIDEO_PREFIX) + message.getId() + "|"
+                runOnUiThread(() -> updateTransferProgress(preparing.getId(), 100, true));
+                String body = (image ? IMAGE_PREFIX : VIDEO_PREFIX) + preparing.getId() + "|"
                         + thumbnail;
-                Message mediaMessage = new Message(message.getId(), device.getId(), body,
-                        message.getTimestamp(), true, Message.Status.PENDING);
-                MediaRepository.store(this, new MediaEntity(message.getId(),
+                Message mediaMessage = new Message(preparing.getId(), device.getId(), body,
+                        preparing.getTimestamp(), true, Message.Status.PENDING);
+                MediaRepository.store(this, new MediaEntity(preparing.getId(),
                         destination.getAbsolutePath(), image ? "image/jpeg" : "video/mp4",
                         destination.length(), 0L));
                 runOnUiThread(() -> queuePreparedMessage(mediaMessage));
@@ -1282,10 +1496,19 @@ public final class ChatActivity extends AppCompatActivity {
                 if (destination.exists() && !destination.delete()) {
                     Log.w(TAG, "Could not remove failed attachment");
                 }
-                runOnUiThread(() -> Toast.makeText(this, R.string.media_prepare_failed,
-                        Toast.LENGTH_LONG).show());
+                runOnUiThread(() -> {
+                    removeTransientMessage(preparing.getId());
+                    Toast.makeText(this, R.string.media_prepare_failed, Toast.LENGTH_LONG).show();
+                });
             }
         });
+    }
+
+    private void removeTransientMessage(String messageId) {
+        View view = messageViews.remove(messageId);
+        messages.remove(messageId);
+        if (view != null) messageContainer.removeView(view);
+        emptyState.setVisibility(messageViews.isEmpty() ? View.VISIBLE : View.GONE);
     }
 
     private void compressImage(Uri uri, File destination) throws IOException {
@@ -1378,16 +1601,21 @@ public final class ChatActivity extends AppCompatActivity {
             text.addView(subtitle);
             LinearLayout actions = new LinearLayout(this);
             actions.setGravity(Gravity.END);
-            Button add = structuredAction(getString(R.string.add_contact));
-            Button call = structuredAction(getString(R.string.call_contact, name));
+            Button add = structuredAction(getString(R.string.add_contact), R.drawable.ic_contact);
+            Button call = structuredAction(getString(R.string.call_contact_action),
+                    R.drawable.ic_call);
             add.setOnClickListener(view -> addToContacts(name, phone));
             call.setOnClickListener(view -> openDialer(phone));
-            actions.addView(add);
-            LinearLayout.LayoutParams callParams = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, dp(48));
+            LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
+                    0, dp(48), 1f);
+            actions.addView(add, actionParams);
+            LinearLayout.LayoutParams callParams = new LinearLayout.LayoutParams(0, dp(48), 1f);
             callParams.setMarginStart(dp(8));
             actions.addView(call, callParams);
-            text.addView(actions);
+            LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            actionsParams.topMargin = dp(8);
+            text.addView(actions, actionsParams);
             row.setContentDescription(getString(R.string.shared_contact) + ", " + name
                     + ", " + phone);
             bubble.addView(row);
@@ -1409,11 +1637,11 @@ public final class ChatActivity extends AppCompatActivity {
         } catch (NumberFormatException exception) {
             text.addView(structuredSubtitle(coordinates));
         }
-        Button maps = structuredAction(getString(R.string.open_location));
+        Button maps = structuredAction(getString(R.string.open_location), R.drawable.ic_location);
         maps.setOnClickListener(view -> openMap(coordinates));
         LinearLayout.LayoutParams mapsParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, dp(48));
-        mapsParams.gravity = Gravity.END;
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(48));
+        mapsParams.topMargin = dp(8);
         text.addView(maps, mapsParams);
         bubble.addView(row);
     }
@@ -1457,35 +1685,60 @@ public final class ChatActivity extends AppCompatActivity {
         return subtitle;
     }
 
-    private Button structuredAction(String label) {
+    private Button structuredAction(String label, int iconResource) {
         Button action = new Button(this);
         action.setText(label);
         action.setTextColor(ContextCompat.getColor(this, R.color.primary));
         action.setTextSize(13f);
         action.setAllCaps(false);
         action.setMinHeight(dp(48));
-        action.setMinimumWidth(dp(72));
-        action.setPadding(dp(12), 0, dp(12), 0);
+        action.setMinimumWidth(0);
+        action.setGravity(Gravity.CENTER);
+        action.setPadding(dp(10), 0, dp(10), 0);
         action.setBackgroundResource(R.drawable.bg_shared_action);
+        Drawable icon = ContextCompat.getDrawable(this, iconResource);
+        if (icon != null) {
+            icon.setBounds(0, 0, dp(18), dp(18));
+            icon.setTint(ContextCompat.getColor(this, R.color.primary));
+            action.setCompoundDrawables(icon, null, null, null);
+            action.setCompoundDrawablePadding(dp(7));
+        }
         return action;
     }
 
     private void openDialer(String phone) {
         Intent dial = new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(phone)));
-        if (dial.resolveActivity(getPackageManager()) != null) startActivity(dial);
+        launchExternal(dial, R.string.dialer_unavailable);
     }
 
     private void addToContacts(String name, String phone) {
-        Intent insert = new Intent(Intent.ACTION_INSERT, ContactsContract.Contacts.CONTENT_URI);
+        Intent insert = new Intent(ContactsContract.Intents.Insert.ACTION);
+        insert.setType(ContactsContract.RawContacts.CONTENT_TYPE);
         insert.putExtra(ContactsContract.Intents.Insert.NAME, name);
         insert.putExtra(ContactsContract.Intents.Insert.PHONE, phone);
-        if (insert.resolveActivity(getPackageManager()) != null) startActivity(insert);
+        launchExternal(insert, R.string.contacts_app_unavailable);
     }
 
     private void openMap(String coordinates) {
-        Uri geo = Uri.parse("geo:" + coordinates + "?q=" + coordinates);
+        Uri geo = Uri.parse("geo:" + coordinates + "?q=" + Uri.encode(coordinates));
         Intent map = new Intent(Intent.ACTION_VIEW, geo);
-        if (map.resolveActivity(getPackageManager()) != null) startActivity(map);
+        try {
+            startActivity(map);
+        } catch (ActivityNotFoundException exception) {
+            Intent browserMap = new Intent(Intent.ACTION_VIEW,
+                    Uri.parse("https://www.google.com/maps/search/?api=1&query="
+                            + Uri.encode(coordinates)));
+            launchExternal(browserMap, R.string.maps_app_unavailable);
+        }
+    }
+
+    private void launchExternal(Intent intent, int unavailableMessage) {
+        try {
+            startActivity(intent);
+        } catch (ActivityNotFoundException | SecurityException exception) {
+            Log.w(TAG, "No application can handle external action", exception);
+            Toast.makeText(this, unavailableMessage, Toast.LENGTH_LONG).show();
+        }
     }
 
     private void addImageContent(LinearLayout bubble, String messageId, boolean outgoing) {

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Centralized so the keyboard can grow without changing chat code. -->
+    <string-array name="chat_emoji" translatable="false">
+        <item>😀</item><item>😃</item><item>😄</item><item>😁</item><item>😆</item><item>😅</item><item>😂</item>
+        <item>🤣</item><item>😊</item><item>😇</item><item>🙂</item><item>🙃</item><item>😉</item><item>😍</item>
+        <item>🥰</item><item>😘</item><item>😋</item><item>😎</item><item>🤩</item><item>🥳</item><item>😏</item>
+        <item>😢</item><item>😭</item><item>😤</item><item>😡</item><item>🤔</item><item>🤗</item><item>🫡</item>
+        <item>👍</item><item>👎</item><item>👏</item><item>🙌</item><item>🙏</item><item>💪</item><item>🤝</item>
+        <item>❤️</item><item>🧡</item><item>💛</item><item>💚</item><item>💙</item><item>💜</item><item>💔</item>
+        <item>🔥</item><item>✨</item><item>🎉</item><item>🎂</item><item>🎁</item><item>🏆</item><item>💯</item>
+        <item>✅</item><item>❌</item><item>⚠️</item><item>⭐</item><item>📌</item><item>💬</item><item>🚀</item>
+        <item>☕</item><item>🍕</item><item>🍰</item><item>🌹</item><item>🌍</item><item>🎵</item><item>📷</item>
+    </string-array>
+</resources>
