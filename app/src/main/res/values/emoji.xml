@@ -753,6 +753,30 @@
         <item>🕕</item>
         <item>🕛</item>
 
+        <!-- 🏳️ Flags -->
+        <item>🏳️</item><item>🏴</item><item>🏁</item><item>🚩</item><item>🏳️‍🌈</item>
+        <item>🏳️‍⚧️</item><item>🇮🇳</item><item>🇺🇸</item><item>🇬🇧</item><item>🇨🇦</item>
+        <item>🇦🇺</item><item>🇯🇵</item><item>🇰🇷</item><item>🇨🇳</item><item>🇩🇪</item>
+        <item>🇫🇷</item><item>🇮🇹</item><item>🇧🇷</item><item>🇦🇪</item><item>🇸🇬</item>
+        <item>🇳🇵</item><item>🇧🇩</item><item>🇱🇰</item><item>🇵🇰</item><item>🇿🇦</item>
+
     </string-array>
+
+    <!-- Keep category metadata aligned with the grouped items in chat_emoji. -->
+    <string-array name="emoji_category_icons" translatable="false">
+        <item>😀</item><item>❤️</item><item>👋</item><item>🐶</item><item>🍕</item>
+        <item>⚽</item><item>🚗</item><item>💻</item><item>💬</item><item>🏳️</item>
+    </string-array>
+
+    <string-array name="emoji_category_labels" translatable="false">
+        <item>Recent / Smileys</item><item>Hearts</item><item>People</item>
+        <item>Animals</item><item>Food</item><item>Activities</item><item>Travel</item>
+        <item>Objects</item><item>Symbols</item><item>Flags</item>
+    </string-array>
+
+    <integer-array name="emoji_category_sizes">
+        <item>112</item><item>25</item><item>88</item><item>123</item><item>87</item>
+        <item>53</item><item>40</item><item>29</item><item>151</item><item>25</item>
+    </integer-array>
 
 </resources>

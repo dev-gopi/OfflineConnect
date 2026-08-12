@@ -44,6 +44,7 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.FrameLayout;
 import android.widget.GridLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
@@ -342,8 +343,20 @@ public final class ChatActivity extends AppCompatActivity {
         findViewById(R.id.btnEmoji).setOnClickListener(view -> showEmojiKeyboard());
     }
 
-    /** Displays a reusable emoji grid instead of a single-choice dialog list. */
+    /** Displays a categorized emoji keyboard backed entirely by app resources. */
     private void showEmojiKeyboard() {
+        String[] emojis = getResources().getStringArray(R.array.chat_emoji);
+        String[] categoryIcons = getResources().getStringArray(R.array.emoji_category_icons);
+        String[] categoryLabels = getResources().getStringArray(R.array.emoji_category_labels);
+        int[] categorySizes = getResources().getIntArray(R.array.emoji_category_sizes);
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setOrientation(LinearLayout.HORIZONTAL);
+        tabs.setPadding(dp(4), 0, dp(4), 0);
+
         GridLayout keys = new GridLayout(this);
         keys.setColumnCount(7);
         keys.setAlignmentMode(GridLayout.ALIGN_BOUNDS);
@@ -353,21 +366,38 @@ public final class ChatActivity extends AppCompatActivity {
         TypedValue selectableBackground = new TypedValue();
         getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless,
                 selectableBackground, true);
-        for (String emoji : getResources().getStringArray(R.array.chat_emoji)) {
-            TextView key = new TextView(this);
-            key.setText(emoji);
-            key.setTextSize(24f);
-            key.setGravity(Gravity.CENTER);
-            key.setContentDescription(emoji);
-            key.setBackgroundResource(selectableBackground.resourceId);
-            key.setOnClickListener(view -> insertAtCursor(emoji));
-            keys.addView(key, new GridLayout.LayoutParams(
-                    GridLayout.spec(GridLayout.UNDEFINED, 1f),
-                    GridLayout.spec(GridLayout.UNDEFINED, 1f)) {{
-                        width = 0;
-                        height = dp(48);
-                    }});
+
+        int categoryStart = 0;
+        for (int index = 0; index < categoryIcons.length; index++) {
+            TextView tab = new TextView(this);
+            tab.setText(categoryIcons[index] + "\n" + categoryLabels[index]);
+            tab.setTextSize(12f);
+            tab.setLines(2);
+            tab.setGravity(Gravity.CENTER);
+            tab.setContentDescription(categoryLabels[index]);
+            tab.setBackgroundResource(selectableBackground.resourceId);
+            int start = categoryStart;
+            int end = Math.min(emojis.length, start + categorySizes[index]);
+            tab.setOnClickListener(view -> {
+                populateEmojiGrid(keys, emojis, start, end, selectableBackground.resourceId);
+                for (int child = 0; child < tabs.getChildCount(); child++) {
+                    tabs.getChildAt(child).setAlpha(tabs.getChildAt(child) == view ? 1f : 0.45f);
+                }
+            });
+            tab.setAlpha(index == 0 ? 1f : 0.45f);
+            tabs.addView(tab, new LinearLayout.LayoutParams(dp(96), dp(60)));
+            categoryStart = end;
         }
+
+        populateEmojiGrid(keys, emojis, 0,
+                Math.min(emojis.length, categorySizes[0]), selectableBackground.resourceId);
+
+        HorizontalScrollView tabScroller = new HorizontalScrollView(this);
+        tabScroller.setHorizontalScrollBarEnabled(false);
+        tabScroller.setFillViewport(false);
+        tabScroller.addView(tabs);
+        content.addView(tabScroller, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(64)));
 
         ImageButton backspace = new ImageButton(this);
         backspace.setImageResource(R.drawable.ic_backspace);
@@ -376,24 +406,45 @@ public final class ChatActivity extends AppCompatActivity {
         backspace.setContentDescription(getString(R.string.emoji_backspace));
         backspace.setPadding(dp(13), dp(13), dp(13), dp(13));
         backspace.setOnClickListener(view -> deleteBeforeCursor());
-        keys.addView(backspace, new GridLayout.LayoutParams(
-                GridLayout.spec(GridLayout.UNDEFINED, 1f),
-                GridLayout.spec(GridLayout.UNDEFINED, 1f)) {{
-                    width = 0;
-                    height = dp(48);
-                }});
 
         ScrollView scroller = new ScrollView(this);
         scroller.setClipToPadding(false);
         scroller.addView(keys);
-        scroller.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(288)));
+        content.addView(scroller, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(272)));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        actions.setPadding(dp(8), 0, dp(8), dp(4));
+        actions.addView(backspace, new LinearLayout.LayoutParams(dp(48), dp(44)));
+        content.addView(actions);
 
         new AlertDialog.Builder(this, R.style.ThemeOverlay_OfflineConnect_Dialog)
                 .setTitle(R.string.emoji_keyboard)
-                .setView(scroller)
+                .setView(content)
                 .setNegativeButton(R.string.close, null)
                 .show();
+    }
+
+    private void populateEmojiGrid(GridLayout keys, String[] emojis, int start, int end,
+                                   int selectableBackground) {
+        keys.removeAllViews();
+        for (int index = start; index < end; index++) {
+            String emoji = emojis[index];
+            TextView key = new TextView(this);
+            key.setText(emoji);
+            key.setTextSize(24f);
+            key.setGravity(Gravity.CENTER);
+            key.setContentDescription(emoji);
+            key.setBackgroundResource(selectableBackground);
+            key.setOnClickListener(view -> insertAtCursor(emoji));
+            GridLayout.LayoutParams params = new GridLayout.LayoutParams(
+                    GridLayout.spec(GridLayout.UNDEFINED, 1f),
+                    GridLayout.spec(GridLayout.UNDEFINED, 1f));
+            params.width = 0;
+            params.height = dp(48);
+            keys.addView(key, params);
+        }
     }
 
     private void insertAtCursor(String value) {
