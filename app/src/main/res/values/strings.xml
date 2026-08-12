@@ -71,7 +71,7 @@
     <string name="bluetooth_le_scan_failed">Bluetooth LE scan failed (code %1$d).</string>
     <string name="bluetooth_advertising_failed">Bluetooth advertising failed (code %1$d).</string>
     <string name="bluetooth_listening_failed">Bluetooth listening failed.</string>
-    <string name="bluetooth_connection_failed">Bluetooth connection failed. Ensure both phones opened this chat.</string>
+    <string name="bluetooth_connection_failed">Bluetooth connection failed. Keep both phones nearby, paired, and try again.</string>
     <string name="bluetooth_connection_lost">Bluetooth connection was lost.</string>
     <string name="bluetooth_connect_permission_required">Bluetooth connection permission is required.</string>
 

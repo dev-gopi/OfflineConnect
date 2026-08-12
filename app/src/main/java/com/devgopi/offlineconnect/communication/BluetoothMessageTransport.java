@@ -12,6 +12,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
@@ -42,6 +43,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /** Secure RFCOMM transport with bounded binary frames and delivery/read acknowledgements. */
 public final class BluetoothMessageTransport implements AutoCloseable {
+    private static final String TAG = "BluetoothTransport";
     private static final String SERVICE_NAME = "Offline Connect";
     private static final UUID SERVICE_UUID = UUID.fromString("e1f7ad8d-8f32-4f73-9008-f28c51d3b741");
     private static final int MAGIC = 0x4F434D31; // OCM1
@@ -62,6 +64,7 @@ public final class BluetoothMessageTransport implements AutoCloseable {
     private static final int MEDIA_CHUNK_BYTES = 32 * 1024;
     private static final int CONNECT_ATTEMPTS = 4;
     private static final long CONNECT_RETRY_DELAY_MS = 650L;
+    private static final long SOCKET_TIMEOUT_MS = 12_000L;
 
     public interface Listener {
         void onConnecting();
@@ -123,6 +126,8 @@ public final class BluetoothMessageTransport implements AutoCloseable {
                 // attach() deliberately closes accept() after a session connects.
                 // That produces an IOException and is not a user-visible failure.
                 if (!closed.get() && !isConnected()) {
+                    Log.e(TAG, "RFCOMM listener stopped before a connection was established",
+                            exception);
                     postError(context.getString(R.string.bluetooth_listening_failed));
                 }
             } finally {
@@ -147,14 +152,28 @@ public final class BluetoothMessageTransport implements AutoCloseable {
                 for (int attempt = 0; attempt < CONNECT_ATTEMPTS && !closed.get(); attempt++) {
                     if (isConnected()) return;
                     BluetoothSocket candidate = null;
+                    Runnable timeout = null;
                     try {
                         candidate = peer.createRfcommSocketToServiceRecord(SERVICE_UUID);
+                        BluetoothSocket attemptSocket = candidate;
+                        timeout = () -> {
+                            if (!isConnected()) closeQuietly(attemptSocket);
+                        };
+                        mainHandler.postDelayed(timeout, SOCKET_TIMEOUT_MS);
                         candidate.connect();
-                        if (negotiateSocket(candidate, true)) attach(candidate);
-                        else closeQuietly(candidate);
+                        if (negotiateSocket(candidate, true)) {
+                            mainHandler.removeCallbacks(timeout);
+                            attach(candidate);
+                        } else {
+                            mainHandler.removeCallbacks(timeout);
+                            closeQuietly(candidate);
+                        }
                         return;
                     } catch (IOException exception) {
                         lastFailure = exception;
+                        if (timeout != null) mainHandler.removeCallbacks(timeout);
+                        Log.w(TAG, "RFCOMM connection attempt " + (attempt + 1)
+                                + " failed for " + address, exception);
                         closeQuietly(candidate);
                         if (isConnected()) return;
                         if (attempt + 1 < CONNECT_ATTEMPTS) {
@@ -172,6 +191,8 @@ public final class BluetoothMessageTransport implements AutoCloseable {
                 // Both phones may press Connect together. If the incoming socket won that race,
                 // the failed outgoing socket is expected and must not undo the live connection.
                 if (!closed.get() && !isConnected()) {
+                    Log.e(TAG, "Unable to establish RFCOMM connection with " + address,
+                            exception);
                     post(() -> {
                         // Recheck on the main thread because attach() may complete after this
                         // worker catches its exception but before UI callbacks are delivered.
@@ -499,6 +520,15 @@ public final class BluetoothMessageTransport implements AutoCloseable {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT)
                         != PackageManager.PERMISSION_GRANTED) {
+            postError(context.getString(R.string.bluetooth_connect_permission_required));
+            return false;
+        }
+        try {
+            if (!adapter.isEnabled()) {
+                postError(context.getString(R.string.bluetooth_turned_off));
+                return false;
+            }
+        } catch (SecurityException exception) {
             postError(context.getString(R.string.bluetooth_connect_permission_required));
             return false;
         }

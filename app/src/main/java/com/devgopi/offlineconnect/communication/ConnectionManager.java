@@ -71,7 +71,10 @@ public final class ConnectionManager implements AutoCloseable {
             @Override public void onSendFailed(String messageId, String reason) {
                 listener.onSendFailed(messageId, reason);
             }
-            @Override public void onError(String message) { listener.onError(message); }
+            @Override public void onError(String message) {
+                setState(State.DISCONNECTED);
+                listener.onError(message);
+            }
         });
         bluetooth = new BluetoothMessageTransport(context, new BluetoothMessageTransport.Listener() {
             @Override public void onConnecting() { setState(State.CONNECTING); }
@@ -95,7 +98,10 @@ public final class ConnectionManager implements AutoCloseable {
             @Override public void onSendFailed(String messageId, String reason) {
                 listener.onSendFailed(messageId, reason);
             }
-            @Override public void onError(String message) { listener.onError(message); }
+            @Override public void onError(String message) {
+                setState(State.DISCONNECTED);
+                listener.onError(message);
+            }
         });
     }
 
@@ -112,10 +118,10 @@ public final class ConnectionManager implements AutoCloseable {
         // prepare() is called when the chat opens. Do not enqueue a second listener here;
         // BluetoothMessageTransport also guards this internally for lifecycle races.
         activeDevice = device;
-        setState(State.CONNECTING);
         if (device.getTransport() == Device.Transport.BLUETOOTH) {
             bluetooth.connect(device.getId());
         } else {
+            setState(State.CONNECTING);
             wifiDirect.connect(device.getId());
         }
     }
