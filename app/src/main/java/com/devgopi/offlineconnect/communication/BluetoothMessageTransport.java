@@ -21,6 +21,7 @@ import com.devgopi.offlineconnect.model.Message;
 import com.devgopi.offlineconnect.R;
 import com.devgopi.offlineconnect.database.MediaEntity;
 import com.devgopi.offlineconnect.database.MediaRepository;
+import com.devgopi.offlineconnect.security.SecureSession;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -61,6 +62,7 @@ public final class BluetoothMessageTransport implements AutoCloseable {
     private static final byte MEDIA_START = 10;
     private static final byte MEDIA_CHUNK = 11;
     private static final byte MEDIA_END = 12;
+    private static final byte MEDIA_CANCEL = 13;
     private static final int MEDIA_CHUNK_BYTES = 32 * 1024;
     private static final int CONNECT_ATTEMPTS = 4;
     private static final long CONNECT_RETRY_DELAY_MS = 650L;
@@ -91,9 +93,12 @@ public final class BluetoothMessageTransport implements AutoCloseable {
     private final Object writeLock = new Object();
     private final AtomicInteger priorityWriters = new AtomicInteger();
     private final Map<String, IncomingMedia> incomingMedia = new ConcurrentHashMap<>();
+    private final java.util.Set<String> cancelledTransfers = ConcurrentHashMap.newKeySet();
     private volatile BluetoothServerSocket serverSocket;
     private volatile BluetoothSocket socket;
     private volatile DataOutputStream output;
+    private volatile DataInputStream input;
+    private volatile SecureSession secureSession;
 
     public BluetoothMessageTransport(@NonNull Context context, @NonNull Listener listener) {
         this.context = context.getApplicationContext();
@@ -233,7 +238,7 @@ public final class BluetoothMessageTransport implements AutoCloseable {
 
     public boolean isConnected() {
         BluetoothSocket current = socket;
-        return current != null && current.isConnected() && output != null;
+        return current != null && current.isConnected() && output != null && secureSession != null;
     }
 
     public void send(Message message) {
@@ -290,6 +295,11 @@ public final class BluetoothMessageTransport implements AutoCloseable {
         try (FileInputStream input = new FileInputStream(file)) {
             int count;
             while ((count = input.read(chunk)) >= 0) {
+                if (cancelledTransfers.contains(message.getId())) {
+                    writePriorityFrame(MEDIA_CANCEL, message.getId(), 0L, 0L, false,
+                            new byte[0]);
+                    throw new IOException(context.getString(R.string.transfer_cancelled));
+                }
                 if (count == 0) continue;
                 byte[] data = count == chunk.length ? chunk : java.util.Arrays.copyOf(chunk, count);
                 writeFrame(MEDIA_CHUNK, message.getId(), 0L, 0L, false, data);
@@ -304,6 +314,11 @@ public final class BluetoothMessageTransport implements AutoCloseable {
             }
         }
         writeFrame(MEDIA_END, message.getId(), 0L, 0L, false, new byte[0]);
+        cancelledTransfers.remove(message.getId());
+    }
+
+    public void cancelMediaTransfer(String messageId) {
+        cancelledTransfers.add(messageId);
     }
 
     private void sendReceipt(byte type, String messageId) {
@@ -334,8 +349,15 @@ public final class BluetoothMessageTransport implements AutoCloseable {
     private synchronized void attach(BluetoothSocket connected) throws IOException {
         if (closed.get()) { closeQuietly(connected); return; }
         if (socket != null && socket.isConnected()) { closeQuietly(connected); return; }
+        DataInputStream connectedInput = new DataInputStream(
+                new BufferedInputStream(connected.getInputStream()));
+        DataOutputStream connectedOutput = new DataOutputStream(
+                new BufferedOutputStream(connected.getOutputStream()));
+        SecureSession session = SecureSession.establish(connectedInput, connectedOutput);
         socket = connected;
-        output = new DataOutputStream(new BufferedOutputStream(connected.getOutputStream()));
+        input = connectedInput;
+        output = connectedOutput;
+        secureSession = session;
         closeQuietly(serverSocket);
         serverSocket = null;
         listening.set(false);
@@ -344,9 +366,9 @@ public final class BluetoothMessageTransport implements AutoCloseable {
     }
 
     private void readLoop(BluetoothSocket connected) {
-        try (DataInputStream input = new DataInputStream(
-                new BufferedInputStream(connected.getInputStream()))) {
-            while (!closed.get() && connected == socket) readFrame(input);
+        DataInputStream connectedInput = input;
+        try {
+            while (!closed.get() && connected == socket) readFrame(connectedInput);
         } catch (EOFException ignored) {
             // Normal remote disconnect.
         } catch (IOException | RuntimeException exception) {
@@ -357,6 +379,8 @@ public final class BluetoothMessageTransport implements AutoCloseable {
                 closeQuietly(connected);
                 socket = null;
                 output = null;
+                input = null;
+                secureSession = null;
                 post(listener::onDisconnected);
                 if (!closed.get()) startListening();
             }
@@ -371,9 +395,17 @@ public final class BluetoothMessageTransport implements AutoCloseable {
         long duration = input.readLong();
         boolean edited = input.readBoolean();
         int length = input.readInt();
-        if (length < 0 || length > MAX_PAYLOAD_BYTES) throw new IOException("Invalid payload size");
-        byte[] payload = new byte[length];
-        input.readFully(payload);
+        if (length < SecureSession.FRAME_OVERHEAD_BYTES
+                || length > MAX_PAYLOAD_BYTES + SecureSession.FRAME_OVERHEAD_BYTES) {
+            throw new IOException("Invalid encrypted payload size");
+        }
+        byte[] encryptedPayload = new byte[length];
+        input.readFully(encryptedPayload);
+        SecureSession session = secureSession;
+        if (session == null) throw new IOException("Secure session unavailable");
+        byte[] payload = session.decrypt(encryptedPayload,
+                SecureSession.frameAad(type, id, timestamp, duration, edited));
+        if (payload.length > MAX_PAYLOAD_BYTES) throw new IOException("Invalid payload size");
 
         if (type == DELIVERED || type == READ) {
             Message.Status status = type == READ ? Message.Status.READ : Message.Status.DELIVERED;
@@ -423,6 +455,11 @@ public final class BluetoothMessageTransport implements AutoCloseable {
             deliverIncomingMedia(transfer);
             return;
         }
+        if (type == MEDIA_CANCEL) {
+            IncomingMedia transfer = incomingMedia.remove(id);
+            if (transfer != null) transfer.discard();
+            return;
+        }
         String body;
         if (type == TEXT) {
             body = new String(payload, StandardCharsets.UTF_8);
@@ -454,16 +491,20 @@ public final class BluetoothMessageTransport implements AutoCloseable {
         while (type == MEDIA_CHUNK && priorityWriters.get() > 0) Thread.yield();
         synchronized (writeLock) {
             DataOutputStream stream = output;
-            if (!isConnected() || stream == null) throw new IOException(context.getString(R.string.not_connected));
+            SecureSession session = secureSession;
+            if (!isConnected() || stream == null || session == null) {
+                throw new IOException(context.getString(R.string.not_connected));
+            }
+            byte[] encryptedPayload = session.encrypt(payload,
+                    SecureSession.frameAad(type, id, timestamp, duration, edited));
             stream.writeInt(MAGIC);
             stream.writeByte(type);
             stream.writeUTF(id);
             stream.writeLong(timestamp);
             stream.writeLong(duration);
             stream.writeBoolean(edited);
-            stream.writeInt(payload.length);
-            if (type == MEDIA_CHUNK) stream.write(payload);
-            else writePayload(stream, id, payload);
+            stream.writeInt(encryptedPayload.length);
+            stream.write(encryptedPayload);
             stream.flush();
         }
     }
@@ -497,24 +538,6 @@ public final class BluetoothMessageTransport implements AutoCloseable {
         sendReceipt(READ, transfer.id);
     }
 
-    private void writePayload(DataOutputStream stream, String messageId, byte[] payload)
-            throws IOException {
-        if (payload.length == 0) return;
-        int written = 0;
-        int lastPercent = -1;
-        while (written < payload.length) {
-            int count = Math.min(32 * 1024, payload.length - written);
-            stream.write(payload, written, count);
-            written += count;
-            int percent = Math.min(100, (int) ((written * 100L) / payload.length));
-            if (percent == 100 || percent >= lastPercent + 2) {
-                lastPercent = percent;
-                int reported = percent;
-                post(() -> listener.onSendProgress(messageId, reported));
-            }
-        }
-    }
-
     private boolean ready() {
         if (adapter == null) { postError(context.getString(R.string.bluetooth_not_supported)); return false; }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
@@ -545,6 +568,8 @@ public final class BluetoothMessageTransport implements AutoCloseable {
         serverSocket = null;
         socket = null;
         output = null;
+        input = null;
+        secureSession = null;
         listening.set(false);
         connecting.set(false);
         ioExecutor.shutdownNow();

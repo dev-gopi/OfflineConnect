@@ -138,6 +138,16 @@ public final class ConnectionManager implements AutoCloseable {
         }
     }
 
+    /** Cancels only the selected media transfer; text and receipt frames remain unaffected. */
+    public void cancelMediaTransfer(String messageId) {
+        if (activeDevice == null) return;
+        if (activeDevice.getTransport() == Device.Transport.BLUETOOTH) {
+            bluetooth.cancelMediaTransfer(messageId);
+        } else {
+            wifiMessages.cancelMediaTransfer(messageId);
+        }
+    }
+
     public void sendDeletion(String messageId) {
         if (activeDevice == null || state != State.CONNECTED) return;
         if (activeDevice.getTransport() == Device.Transport.BLUETOOTH) {

@@ -31,7 +31,7 @@ public final class WifiDirectManager implements AutoCloseable {
     private static final int MAX_BUSY_RETRIES = 2;
     private static final long BUSY_RETRY_DELAY_MS = 1_200L;
     private static final int MAX_CONNECT_RETRIES = 3;
-    private static final long CONNECT_RETRY_DELAY_MS = 1_000L;
+    private static final long CONNECT_RETRY_DELAY_MS = 750L;
     private static final long CONNECTION_TIMEOUT_MS = 30_000L;
     private static final int CONNECTION_INFO_RETRIES = 5;
     public interface Listener {
@@ -131,6 +131,7 @@ public final class WifiDirectManager implements AutoCloseable {
                 }
             });
         } catch (SecurityException exception) {
+            pendingDeviceAddress = null;
             listener.onError(context.getString(R.string.nearby_permission_revoked));
         }
     }
@@ -151,6 +152,7 @@ public final class WifiDirectManager implements AutoCloseable {
                 @Override public void onFailure(int reason) { connectAttempt(generation, 0); }
             });
         } catch (SecurityException exception) {
+            pendingDeviceAddress = null;
             listener.onError(context.getString(R.string.nearby_permission_revoked));
         }
     }
@@ -170,9 +172,7 @@ public final class WifiDirectManager implements AutoCloseable {
                 @Override public void onFailure(int reason) {
                     if ((reason == WifiP2pManager.BUSY || reason == WifiP2pManager.ERROR)
                             && attempt + 1 < MAX_CONNECT_RETRIES) {
-                        cancelConnectQuietly();
-                        mainHandler.postDelayed(() -> connectAttempt(generation, attempt + 1),
-                                CONNECT_RETRY_DELAY_MS);
+                        recoverAndRetry(generation, attempt + 1);
                         return;
                     }
                     pendingDeviceAddress = null;
@@ -182,8 +182,51 @@ public final class WifiDirectManager implements AutoCloseable {
                 }
             });
         } catch (SecurityException exception) {
+            pendingDeviceAddress = null;
             listener.onError(context.getString(R.string.nearby_permission_revoked));
         }
+    }
+
+    /**
+     * Vendor Wi-Fi stacks commonly retain an incomplete invitation or stale group after ERROR.
+     * Serialize cleanup callbacks before retrying so connect() does not race cancel/removeGroup().
+     */
+    @SuppressLint("MissingPermission")
+    private void recoverAndRetry(int generation, int nextAttempt) {
+        if (generation != connectionGeneration || pendingDeviceAddress == null) return;
+        try {
+            manager.cancelConnect(channel, new WifiP2pManager.ActionListener() {
+                @Override public void onSuccess() { removeStaleGroupAndRetry(generation, nextAttempt); }
+                @Override public void onFailure(int reason) {
+                    removeStaleGroupAndRetry(generation, nextAttempt);
+                }
+            });
+        } catch (SecurityException exception) {
+            pendingDeviceAddress = null;
+            listener.onError(context.getString(R.string.nearby_permission_revoked));
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private void removeStaleGroupAndRetry(int generation, int nextAttempt) {
+        if (generation != connectionGeneration || pendingDeviceAddress == null) return;
+        try {
+            manager.removeGroup(channel, new WifiP2pManager.ActionListener() {
+                @Override public void onSuccess() { scheduleConnectRetry(generation, nextAttempt); }
+                @Override public void onFailure(int reason) {
+                    // NO_GROUP and vendor ERROR both mean there is no useful group to preserve.
+                    scheduleConnectRetry(generation, nextAttempt);
+                }
+            });
+        } catch (SecurityException exception) {
+            pendingDeviceAddress = null;
+            listener.onError(context.getString(R.string.nearby_permission_revoked));
+        }
+    }
+
+    private void scheduleConnectRetry(int generation, int nextAttempt) {
+        mainHandler.postDelayed(() -> connectAttempt(generation, nextAttempt),
+                CONNECT_RETRY_DELAY_MS);
     }
 
     public void stopDiscovery() {
@@ -193,6 +236,7 @@ public final class WifiDirectManager implements AutoCloseable {
                         action(context.getString(R.string.wifi_discovery_stopped), false));
             }
         } catch (SecurityException exception) {
+            pendingDeviceAddress = null;
             listener.onError(context.getString(R.string.nearby_permission_revoked));
         }
     }

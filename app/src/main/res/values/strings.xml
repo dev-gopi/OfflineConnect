@@ -116,6 +116,7 @@
     <string name="view_all_messages">All messages</string>
     <string name="view_starred_messages">Starred messages</string>
     <string name="view_pinned_messages">Pinned messages</string>
+    <string name="selected_option">Selected</string>
     <string name="no_starred_messages">No starred messages in this chat.</string>
     <string name="no_pinned_messages">No pinned messages in this chat.</string>
     <string name="no_search_results">No matching messages.</string>
@@ -133,6 +134,8 @@
     <string name="sending_message">Sending…</string>
     <string name="waiting_to_send">Waiting for connection…</string>
     <string name="transfer_progress_format">%1$s %2$d%%</string>
+    <string name="cancel_transfer">Cancel upload</string>
+    <string name="transfer_cancelled">Upload cancelled</string>
     <string name="edited_indicator">Edited</string>
     <string name="play_video">Play video</string>
     <string name="clear_search">Clear search</string>
@@ -174,8 +177,12 @@
     <string name="voice_file_missing">This voice recording is no longer available.</string>
     <string name="recording_time">Recording… %1$s · release to send</string>
     <string name="recording_label">Recording voice message</string>
-    <string name="recording_release_hint">Release to send · swipe right to cancel</string>
+    <string name="recording_release_hint">Release to send · swipe sideways to cancel · swipe up to lock</string>
     <string name="recording_cancel_hint">Release now to cancel</string>
+    <string name="recording_lock_hint">Release to lock recording</string>
+    <string name="recording_locked">Recording locked</string>
+    <string name="cancel_recording">Cancel recording</string>
+    <string name="send_recording">Send recording</string>
     <string name="recording_limit_reached">Voice message saved at the five-minute limit.</string>
 
 </resources>

@@ -104,7 +104,8 @@ public final class ChatActivity extends AppCompatActivity {
     private static final String LOCATION_PREFIX = "location://";
     private static final String PREPARING_MEDIA_PREFIX = "preparing-media://";
     private static final long MAX_MEDIA_BYTES = 16L * 1024L * 1024L;
-    private static final float CANCEL_DISTANCE_DP = 90f;
+    private static final float CANCEL_DISTANCE_DP = 56f;
+    private static final float LOCK_DISTANCE_DP = 90f;
     private static final int HISTORY_PAGE_SIZE = 40;
     private static final long LOCATION_TIMEOUT_MS = 12_000L;
     private static final long TYPING_IDLE_TIMEOUT_MS = 1_500L;
@@ -113,6 +114,8 @@ public final class ChatActivity extends AppCompatActivity {
     private final ExecutorService databaseExecutor = Executors.newSingleThreadExecutor();
     private final Map<String, View> messageViews = new HashMap<>();
     private final Map<String, Message> messages = new HashMap<>();
+    private final java.util.Set<String> cancelledMedia =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final java.util.Set<String> starredMessageIds = new HashSet<>();
     private final java.util.Set<String> pinnedMessageIds = new HashSet<>();
     private final EncryptionManager encryption = new EncryptionManager();
@@ -161,8 +164,12 @@ public final class ChatActivity extends AppCompatActivity {
     private File recordingFile;
     private long recordingStartedAt;
     private float recordingDownX;
+    private float recordingDownY;
     private boolean recording;
     private boolean cancelRecording;
+    private boolean recordingLocked;
+    private ImageButton cancelRecordingButton;
+    private ImageButton sendRecordingButton;
     private ImageButton activePlayButton;
     private SeekBar activeSeekBar;
     private TextView activeDurationLabel;
@@ -245,6 +252,8 @@ public final class ChatActivity extends AppCompatActivity {
         recordingAction = findViewById(R.id.txtRecordingAction);
         recordingPanel = findViewById(R.id.recordingPanel);
         recordingDot = findViewById(R.id.recordingDot);
+        cancelRecordingButton = findViewById(R.id.btnCancelRecording);
+        sendRecordingButton = findViewById(R.id.btnSendRecording);
         emojiButton = findViewById(R.id.btnEmoji);
         emptyState = findViewById(R.id.txtConversationEmpty);
         messageInput = findViewById(R.id.editMessage);
@@ -371,7 +380,7 @@ public final class ChatActivity extends AppCompatActivity {
         for (int index = 0; index < categoryIcons.length; index++) {
             TextView tab = new TextView(this);
             tab.setText(categoryIcons[index] + "\n" + categoryLabels[index]);
-            tab.setTextSize(12f);
+            tab.setTextSize(11f);
             tab.setLines(2);
             tab.setGravity(Gravity.CENTER);
             tab.setContentDescription(categoryLabels[index]);
@@ -385,7 +394,7 @@ public final class ChatActivity extends AppCompatActivity {
                 }
             });
             tab.setAlpha(index == 0 ? 1f : 0.45f);
-            tabs.addView(tab, new LinearLayout.LayoutParams(dp(96), dp(60)));
+            tabs.addView(tab, new LinearLayout.LayoutParams(dp(88), dp(56)));
             categoryStart = end;
         }
 
@@ -397,7 +406,7 @@ public final class ChatActivity extends AppCompatActivity {
         tabScroller.setFillViewport(false);
         tabScroller.addView(tabs);
         content.addView(tabScroller, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(64)));
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(60)));
 
         ImageButton backspace = new ImageButton(this);
         backspace.setImageResource(R.drawable.ic_backspace);
@@ -433,7 +442,7 @@ public final class ChatActivity extends AppCompatActivity {
             String emoji = emojis[index];
             TextView key = new TextView(this);
             key.setText(emoji);
-            key.setTextSize(24f);
+            key.setTextSize(22f);
             key.setGravity(Gravity.CENTER);
             key.setContentDescription(emoji);
             key.setBackgroundResource(selectableBackground);
@@ -469,7 +478,9 @@ public final class ChatActivity extends AppCompatActivity {
                     getString(R.string.view_pinned_messages));
             List<Integer> icons = java.util.Arrays.asList(R.drawable.ic_messages,
                     R.drawable.ic_star, R.drawable.ic_pin);
-            showIconActionDialog(R.string.chat_options, labels, icons, selected -> {
+            int activeFilter = messageViewFilter == MessageViewFilter.STARRED ? 1
+                    : messageViewFilter == MessageViewFilter.PINNED ? 2 : 0;
+            showIconActionDialog(R.string.chat_options, labels, icons, activeFilter, selected -> {
                 messageViewFilter = selected == 1 ? MessageViewFilter.STARRED
                         : selected == 2 ? MessageViewFilter.PINNED : MessageViewFilter.ALL;
                 rebuildSearchResults(searchInput.getText().toString(), true);
@@ -628,6 +639,12 @@ public final class ChatActivity extends AppCompatActivity {
             if (!messageInput.getText().toString().trim().isEmpty()) return false;
             return handleRecordingGesture(event);
         });
+        cancelRecordingButton.setOnClickListener(view -> {
+            if (recording && recordingLocked) finishRecording(true);
+        });
+        sendRecordingButton.setOnClickListener(view -> {
+            if (recording && recordingLocked) finishRecording(false);
+        });
         updateComposerIcon();
     }
 
@@ -659,7 +676,9 @@ public final class ChatActivity extends AppCompatActivity {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 recordingDownX = event.getRawX();
+                recordingDownY = event.getRawY();
                 cancelRecording = false;
+                recordingLocked = false;
                 if (!hasMicrophonePermission()) {
                     microphonePermission.launch(Manifest.permission.RECORD_AUDIO);
                     return true;
@@ -667,21 +686,40 @@ public final class ChatActivity extends AppCompatActivity {
                 startRecording();
                 return true;
             case MotionEvent.ACTION_MOVE:
-                if (recording && event.getRawX() - recordingDownX >= dp(CANCEL_DISTANCE_DP)) {
+                if (!recording || recordingLocked) return true;
+                float horizontalDistance = event.getRawX() - recordingDownX;
+                float upwardDistance = recordingDownY - event.getRawY();
+                if (!cancelRecording && upwardDistance >= dp(LOCK_DISTANCE_DP)
+                        && upwardDistance > Math.abs(horizontalDistance)) {
+                    lockRecording();
+                } else if (Math.abs(horizontalDistance) >= dp(CANCEL_DISTANCE_DP)) {
                     cancelRecording = true;
                     recordingAction.setText(R.string.recording_cancel_hint);
                     recordingPanel.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                } else if (!cancelRecording) {
+                    recordingAction.setText(upwardDistance >= dp(LOCK_DISTANCE_DP / 2f)
+                            ? R.string.recording_lock_hint : R.string.recording_release_hint);
                 }
                 return true;
             case MotionEvent.ACTION_UP:
-                if (recording) finishRecording(cancelRecording);
+                if (recording && !recordingLocked) finishRecording(cancelRecording);
                 return true;
             case MotionEvent.ACTION_CANCEL:
-                if (recording) finishRecording(true);
+                if (recording && !recordingLocked) finishRecording(true);
                 return true;
             default:
                 return false;
         }
+    }
+
+    private void lockRecording() {
+        if (!recording || recordingLocked) return;
+        recordingLocked = true;
+        cancelRecording = false;
+        recordingAction.setText(R.string.recording_locked);
+        cancelRecordingButton.setVisibility(View.VISIBLE);
+        sendRecordingButton.setVisibility(View.VISIBLE);
+        recordingPanel.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
     }
 
     private boolean hasMicrophonePermission() {
@@ -724,6 +762,8 @@ public final class ChatActivity extends AppCompatActivity {
             emojiButton.setVisibility(View.GONE);
             recordingTimer.setText(formatDuration(0L));
             recordingAction.setText(R.string.recording_release_hint);
+            cancelRecordingButton.setVisibility(View.GONE);
+            sendRecordingButton.setVisibility(View.GONE);
             recordingDot.setAlpha(1f);
             recordingPanel.setVisibility(View.VISIBLE);
             recordingPanel.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
@@ -747,8 +787,11 @@ public final class ChatActivity extends AppCompatActivity {
             recordingHandler.removeCallbacks(recordingTicker);
             releaseRecorder();
             recording = false;
+            recordingLocked = false;
             recordingDot.animate().cancel();
             recordingPanel.setVisibility(View.GONE);
+            cancelRecordingButton.setVisibility(View.GONE);
+            sendRecordingButton.setVisibility(View.GONE);
             messageInput.setVisibility(View.VISIBLE);
             emojiButton.setVisibility(View.VISIBLE);
         }
@@ -1015,7 +1058,7 @@ public final class ChatActivity extends AppCompatActivity {
 
         LinearLayout bubble = new LinearLayout(this);
         bubble.setOrientation(LinearLayout.VERTICAL);
-        bubble.setPadding(dp(14), dp(10), dp(14), dp(8));
+        bubble.setPadding(dp(12), dp(8), dp(12), dp(7));
         bubble.setElevation(dp(1));
         bubble.setMinimumWidth(dp(96));
         bubble.setTag(message.getTimestamp());
@@ -1052,7 +1095,7 @@ public final class ChatActivity extends AppCompatActivity {
             TextView body = new TextView(this);
             body.setText(message.getBody());
             body.setTextColor(ContextCompat.getColor(this, R.color.text_primary));
-            body.setTextSize(16f);
+            body.setTextSize(15f);
             body.setLineSpacing(dp(2), 1f);
             body.setTextIsSelectable(false);
             body.setTag("searchable_message_body");
@@ -1084,8 +1127,8 @@ public final class ChatActivity extends AppCompatActivity {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         params.gravity = message.isOutgoing() ? Gravity.END : Gravity.START;
-        if (message.isOutgoing()) params.setMargins(dp(16), dp(4), 0, dp(8));
-        else params.setMargins(0, dp(4), dp(16), dp(8));
+        if (message.isOutgoing()) params.setMargins(dp(24), dp(3), 0, dp(5));
+        else params.setMargins(0, dp(3), dp(24), dp(5));
         if (oldIndex >= 0) messageContainer.addView(bubble, oldIndex, params);
         else {
             int insertionIndex = messageContainer.getChildCount();
@@ -1268,14 +1311,14 @@ public final class ChatActivity extends AppCompatActivity {
         details.setText(String.format(Locale.getDefault(), "%s  %s %s", time,
                 receiptText(message.getStatus()), state));
         details.setTextColor(receiptColor(message.getStatus()));
-        details.setTextSize(12f);
+        details.setTextSize(11f);
         details.setContentDescription(time + ", " + state);
         footer.addView(details);
         if (message.isEdited()) {
             TextView edited = new TextView(this);
             edited.setText(R.string.edited_indicator);
             edited.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
-            edited.setTextSize(12f);
+            edited.setTextSize(11f);
             LinearLayout.LayoutParams editedParams = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -1302,14 +1345,34 @@ public final class ChatActivity extends AppCompatActivity {
 
     private void addTransferProgress(LinearLayout bubble, String messageId, int labelResource,
                                      int initialProgress) {
+        Message transferMessage = messages.get(messageId);
+        boolean cancellable = transferMessage != null && transferMessage.isOutgoing()
+                && (transferMessage.getBody().startsWith(PREPARING_MEDIA_PREFIX)
+                || transferMessage.getBody().startsWith(IMAGE_PREFIX)
+                || transferMessage.getBody().startsWith(VIDEO_PREFIX));
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
         TextView label = new TextView(this);
         label.setText(getString(R.string.transfer_progress_format,
                 getString(labelResource), initialProgress));
         label.setTag("transfer_label_" + messageId);
         label.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
-        label.setTextSize(12f);
+        label.setTextSize(11f);
         label.setPadding(0, dp(2), 0, dp(5));
-        bubble.addView(label);
+        header.addView(label, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        if (cancellable) {
+            ImageButton cancel = new ImageButton(this);
+            cancel.setImageResource(R.drawable.ic_clear);
+            cancel.setColorFilter(ContextCompat.getColor(this, R.color.text_secondary));
+            cancel.setBackgroundColor(Color.TRANSPARENT);
+            cancel.setPadding(dp(10), dp(10), dp(10), dp(10));
+            cancel.setContentDescription(getString(R.string.cancel_transfer));
+            cancel.setOnClickListener(view -> cancelMediaUpload(messageId));
+            header.addView(cancel, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        }
+        bubble.addView(header, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         ProgressBar progress = new ProgressBar(this, null,
                 android.R.attr.progressBarStyleHorizontal);
@@ -1322,6 +1385,19 @@ public final class ChatActivity extends AppCompatActivity {
         progress.setContentDescription(getString(labelResource));
         bubble.addView(progress, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(3)));
+    }
+
+    private void cancelMediaUpload(String messageId) {
+        Message message = messages.get(messageId);
+        if (message == null) return;
+        cancelledMedia.add(messageId);
+        connectionManager.cancelMediaTransfer(messageId);
+        if (message.getBody().startsWith(PREPARING_MEDIA_PREFIX)) {
+            removeTransientMessage(messageId);
+        } else {
+            applyDeletion(messageId, true);
+        }
+        Toast.makeText(this, R.string.transfer_cancelled, Toast.LENGTH_SHORT).show();
     }
 
     private void updateTransferProgress(String messageId, int percent, boolean compression) {
@@ -1351,9 +1427,14 @@ public final class ChatActivity extends AppCompatActivity {
 
     private void showIconActionDialog(int title, List<String> labels, List<Integer> icons,
                                       IconActionListener listener) {
+        showIconActionDialog(title, labels, icons, -1, listener);
+    }
+
+    private void showIconActionDialog(int title, List<String> labels, List<Integer> icons,
+                                      int selectedIndex, IconActionListener listener) {
         LinearLayout menu = new LinearLayout(this);
         menu.setOrientation(LinearLayout.VERTICAL);
-        menu.setPadding(dp(8), dp(4), dp(8), dp(8));
+        menu.setPadding(dp(6), dp(2), dp(6), dp(6));
         AlertDialog dialog = new AlertDialog.Builder(this,
                 R.style.ThemeOverlay_OfflineConnect_Dialog)
                 .setTitle(title)
@@ -1366,23 +1447,34 @@ public final class ChatActivity extends AppCompatActivity {
             LinearLayout row = new LinearLayout(this);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setPadding(dp(16), 0, dp(16), 0);
+            row.setPadding(dp(14), 0, dp(14), 0);
             row.setBackgroundResource(selectable.resourceId);
             row.setContentDescription(labels.get(index));
 
             ImageView icon = new ImageView(this);
             icon.setImageResource(icons.get(index));
             icon.setColorFilter(ContextCompat.getColor(this, R.color.primary));
-            row.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(24)));
+            row.addView(icon, new LinearLayout.LayoutParams(dp(22), dp(22)));
 
             TextView label = new TextView(this);
             label.setText(labels.get(index));
             label.setTextColor(ContextCompat.getColor(this, R.color.text_primary));
-            label.setTextSize(16f);
+            label.setTextSize(14f);
             LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
                     0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
             labelParams.setMarginStart(dp(18));
             row.addView(label, labelParams);
+
+            if (index == selectedIndex) {
+                TextView selectedMark = new TextView(this);
+                selectedMark.setText("✓");
+                selectedMark.setTextSize(20f);
+                selectedMark.setTypeface(null, android.graphics.Typeface.BOLD);
+                selectedMark.setTextColor(ContextCompat.getColor(this, R.color.primary));
+                selectedMark.setGravity(Gravity.CENTER);
+                selectedMark.setContentDescription(getString(R.string.selected_option));
+                row.addView(selectedMark, new LinearLayout.LayoutParams(dp(32), dp(40)));
+            }
 
             final int selected = index;
             row.setOnClickListener(view -> {
@@ -1390,7 +1482,16 @@ public final class ChatActivity extends AppCompatActivity {
                 listener.onAction(selected);
             });
             menu.addView(row, new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, dp(56)));
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
+            if (index < labels.size() - 1) {
+                View divider = new View(this);
+                divider.setBackgroundColor(ContextCompat.getColor(this, R.color.menu_divider));
+                LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, dp(1));
+                dividerParams.setMarginStart(dp(58));
+                dividerParams.setMarginEnd(dp(12));
+                menu.addView(divider, dividerParams);
+            }
         }
         dialog.show();
     }
@@ -1520,6 +1621,12 @@ public final class ChatActivity extends AppCompatActivity {
                 runOnUiThread(() -> updateTransferProgress(preparing.getId(), 15, true));
                 if (image) compressImage(uri, destination);
                 else copyUri(uri, destination);
+                if (cancelledMedia.remove(preparing.getId())) {
+                    if (destination.exists() && !destination.delete()) {
+                        Log.w(TAG, "Could not remove cancelled attachment");
+                    }
+                    return;
+                }
                 runOnUiThread(() -> updateTransferProgress(preparing.getId(), 85, true));
                 if (!destination.isFile() || destination.length() == 0
                         || destination.length() > MAX_MEDIA_BYTES) {
@@ -1541,7 +1648,14 @@ public final class ChatActivity extends AppCompatActivity {
                 MediaRepository.store(this, new MediaEntity(preparing.getId(),
                         destination.getAbsolutePath(), image ? "image/jpeg" : "video/mp4",
                         destination.length(), 0L));
-                runOnUiThread(() -> queuePreparedMessage(mediaMessage));
+                runOnUiThread(() -> {
+                    if (cancelledMedia.remove(preparing.getId())) {
+                        MediaRepository.delete(this, preparing.getId());
+                        removeTransientMessage(preparing.getId());
+                    } else {
+                        queuePreparedMessage(mediaMessage);
+                    }
+                });
             } catch (IOException | RuntimeException exception) {
                 Log.e(TAG, "Could not prepare attachment", exception);
                 if (destination.exists() && !destination.delete()) {
@@ -1658,10 +1772,10 @@ public final class ChatActivity extends AppCompatActivity {
             add.setOnClickListener(view -> addToContacts(name, phone));
             call.setOnClickListener(view -> openDialer(phone));
             LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
-                    0, dp(48), 1f);
+                    0, dp(42), 1f);
             actions.addView(add, actionParams);
-            LinearLayout.LayoutParams callParams = new LinearLayout.LayoutParams(0, dp(48), 1f);
-            callParams.setMarginStart(dp(8));
+            LinearLayout.LayoutParams callParams = new LinearLayout.LayoutParams(0, dp(42), 1f);
+            callParams.setMarginStart(dp(6));
             actions.addView(call, callParams);
             LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -1691,8 +1805,8 @@ public final class ChatActivity extends AppCompatActivity {
         Button maps = structuredAction(getString(R.string.open_location), R.drawable.ic_location);
         maps.setOnClickListener(view -> openMap(coordinates));
         LinearLayout.LayoutParams mapsParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(48));
-        mapsParams.topMargin = dp(8);
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(42));
+        mapsParams.topMargin = dp(6);
         text.addView(maps, mapsParams);
         bubble.addView(row);
     }
@@ -1701,11 +1815,11 @@ public final class ChatActivity extends AppCompatActivity {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setBackgroundResource(R.drawable.bg_shared_card);
-        row.setPadding(dp(4), dp(4), dp(4), dp(4));
+        row.setPadding(dp(4), dp(4), dp(6), dp(4));
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconResource);
-        icon.setPadding(dp(10), dp(10), dp(10), dp(10));
-        row.addView(icon, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        icon.setPadding(dp(9), dp(9), dp(9), dp(9));
+        row.addView(icon, new LinearLayout.LayoutParams(dp(44), dp(44)));
         return row;
     }
 
@@ -1723,7 +1837,7 @@ public final class ChatActivity extends AppCompatActivity {
         TextView title = new TextView(this);
         title.setText(value);
         title.setTextColor(ContextCompat.getColor(this, R.color.text_primary));
-        title.setTextSize(16f);
+        title.setTextSize(15f);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         return title;
     }
@@ -1732,7 +1846,7 @@ public final class ChatActivity extends AppCompatActivity {
         TextView subtitle = new TextView(this);
         subtitle.setText(value);
         subtitle.setTextColor(ContextCompat.getColor(this, R.color.primary));
-        subtitle.setTextSize(13f);
+        subtitle.setTextSize(12f);
         return subtitle;
     }
 
@@ -1740,19 +1854,19 @@ public final class ChatActivity extends AppCompatActivity {
         Button action = new Button(this);
         action.setText(label);
         action.setTextColor(ContextCompat.getColor(this, R.color.primary));
-        action.setTextSize(13f);
+        action.setTextSize(12f);
         action.setAllCaps(false);
-        action.setMinHeight(dp(48));
+        action.setMinHeight(0);
         action.setMinimumWidth(0);
         action.setGravity(Gravity.CENTER);
-        action.setPadding(dp(10), 0, dp(10), 0);
+        action.setPadding(dp(8), 0, dp(8), 0);
         action.setBackgroundResource(R.drawable.bg_shared_action);
         Drawable icon = ContextCompat.getDrawable(this, iconResource);
         if (icon != null) {
-            icon.setBounds(0, 0, dp(18), dp(18));
+            icon.setBounds(0, 0, dp(16), dp(16));
             icon.setTint(ContextCompat.getColor(this, R.color.primary));
             action.setCompoundDrawables(icon, null, null, null);
-            action.setCompoundDrawablePadding(dp(7));
+            action.setCompoundDrawablePadding(dp(5));
         }
         return action;
     }

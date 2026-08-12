@@ -5,7 +5,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:paddingStart="@dimen/screen_horizontal_padding"
-    android:paddingTop="20dp"
+    android:paddingTop="16dp"
     android:paddingEnd="@dimen/screen_horizontal_padding"
     android:paddingBottom="16dp">
 
@@ -25,6 +25,9 @@
         android:layout_height="wrap_content"
         android:layout_centerVertical="false"
         android:layout_marginStart="8dp"
+        android:layout_alignTop="@id/btnBackDevices"
+        android:layout_alignBottom="@id/btnBackDevices"
+        android:gravity="center_vertical"
         android:layout_toEndOf="@id/btnBackDevices"
         android:text="@string/nearby_devices"
         android:textAppearance="@style/TextAppearance.OfflineConnect.ScreenTitle" />
@@ -36,7 +39,7 @@
         android:layout_height="wrap_content"
         android:layout_below="@id/txtDevicesTitle"
         android:layout_alignStart="@id/txtDevicesTitle"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="4dp"
         android:text="@string/nearby_devices_description" />
 
     <Button
@@ -45,7 +48,7 @@
         android:layout_width="wrap_content"
         android:layout_alignParentBottom="true"
         android:layout_centerHorizontal="true"
-        android:minWidth="240dp"
+        android:minWidth="184dp"
         android:text="@string/scan" />
 
     <LinearLayout
@@ -53,7 +56,7 @@
         android:layout_width="match_parent"
         android:layout_height="@dimen/control_height"
         android:layout_below="@id/txtDevicesDescription"
-        android:layout_marginTop="10dp"
+        android:layout_marginTop="8dp"
         android:background="@drawable/bg_edit_box"
         android:gravity="center_vertical"
         android:orientation="horizontal">
@@ -68,7 +71,8 @@
             android:importantForAutofill="no"
             android:inputType="text"
             android:maxLines="1"
-            android:padding="0dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="4dp"
             android:textColor="@color/text_primary"
             android:textColorHint="@color/text_secondary" />
 
@@ -89,27 +93,27 @@
         android:layout_height="match_parent"
         android:layout_below="@id/deviceSearchContainer"
         android:layout_above="@id/btnScan"
-        android:layout_marginTop="10dp"
-        android:layout_marginBottom="14dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="12dp"
         android:background="@drawable/bg_card"
         android:elevation="2dp"
         android:orientation="vertical"
-        android:paddingTop="12dp">
+        android:paddingTop="10dp">
 
         <TextView
             android:id="@+id/txtDiscoveryStatus"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
             android:background="@drawable/bg_status"
-            android:paddingStart="14dp"
-            android:paddingTop="8dp"
-            android:paddingEnd="14dp"
-            android:paddingBottom="8dp"
+            android:paddingStart="12dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="6dp"
             android:text="@string/ready_to_scan"
             android:textColor="@color/primary_dark"
-            android:textSize="14sp"
+            android:textSize="13sp"
             android:textStyle="bold" />
 
         <ProgressBar
@@ -117,7 +121,7 @@
             style="?android:attr/progressBarStyleHorizontal"
             android:layout_width="match_parent"
             android:layout_height="3dp"
-            android:layout_marginTop="10dp"
+            android:layout_marginTop="8dp"
             android:indeterminate="true"
             android:indeterminateTint="@color/primary"
             android:visibility="gone" />
@@ -130,7 +134,7 @@
             android:layout_marginTop="8dp"
             android:layout_weight="1"
             android:gravity="center"
-            android:padding="32dp"
+            android:padding="24dp"
             android:text="@string/devices_empty"
             android:textAlignment="center" />
 
@@ -138,7 +142,7 @@
             android:id="@+id/listDevices"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="8dp"
             android:layout_weight="1"
             android:clipToPadding="false"
             android:contentDescription="@string/nearby_devices"
