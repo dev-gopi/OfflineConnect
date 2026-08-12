@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/mediaViewerRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FF000000">
+
+    <ImageView
+        android:id="@+id/fullscreenImage"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@string/fullscreen_image"
+        android:scaleType="fitCenter"
+        android:visibility="gone" />
+
+    <VideoView
+        android:id="@+id/fullscreenVideo"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="center"
+        android:contentDescription="@string/play_video"
+        android:visibility="gone" />
+
+    <ImageButton
+        android:id="@+id/btnCloseMedia"
+        android:layout_width="@dimen/touch_target"
+        android:layout_height="@dimen/touch_target"
+        android:layout_gravity="top|start"
+        android:layout_margin="12dp"
+        android:background="@drawable/bg_media_action"
+        android:contentDescription="@string/close"
+        android:padding="@dimen/icon_padding"
+        android:src="@drawable/ic_back" />
+
+    <ImageButton
+        android:id="@+id/btnSaveFullscreenMedia"
+        android:layout_width="@dimen/touch_target"
+        android:layout_height="@dimen/touch_target"
+        android:layout_gravity="top|end"
+        android:layout_margin="12dp"
+        android:background="@drawable/bg_media_action"
+        android:contentDescription="@string/save_media"
+        android:padding="@dimen/icon_padding"
+        android:src="@drawable/ic_download"
+        android:visibility="gone" />
+</FrameLayout>

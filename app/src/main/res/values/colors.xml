@@ -1,13 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="primary">#155EEF</color>
-    <color name="primary_dark">#0B3B9E</color>
-    <color name="primary_soft">#EAF1FF</color>
-    <color name="accent">#16A085</color>
-    <color name="background">#F6F8FC</color>
+    <color name="primary">#2563EB</color>
+    <color name="primary_dark">#1E40AF</color>
+    <color name="primary_soft">#E8F0FF</color>
+    <color name="accent">#0F9F8F</color>
+    <color name="background">#F5F7FB</color>
+    <color name="chat_background_top">#F8FAFD</color>
+    <color name="chat_background_bottom">#EDF2F8</color>
+    <color name="chat_outgoing">#DFEAFF</color>
+    <color name="chat_incoming">#FFFFFF</color>
+    <color name="composer_surface">#FFFFFF</color>
+    <color name="input_focused">#F7FAFF</color>
+    <color name="input_disabled">#F1F4F8</color>
+    <color name="search_text_highlight">#FFFF80</color>
+    <color name="search_bubble_highlight">#40FFC107</color>
+    <color name="message_selected_highlight">#552563EB</color>
+    <color name="message_hover_highlight">#1F2563EB</color>
     <color name="surface">#FFFFFF</color>
     <color name="text_primary">#172033</color>
-    <color name="text_secondary">#65708A</color>
-    <color name="border">#DDE3EE</color>
+    <color name="text_secondary">#667085</color>
+    <color name="border">#D7DFEA</color>
     <color name="on_primary">#FFFFFF</color>
 </resources>

@@ -6,6 +6,7 @@ import androidx.annotation.NonNull;
 
 import com.devgopi.offlineconnect.model.Device;
 import com.devgopi.offlineconnect.model.Message;
+import com.devgopi.offlineconnect.R;
 
 /** Selects the peer transport and exposes one messaging API to the chat screen. */
 public final class ConnectionManager implements AutoCloseable {
@@ -14,12 +15,14 @@ public final class ConnectionManager implements AutoCloseable {
     public interface Listener {
         void onStateChanged(State state);
         void onMessageReceived(Message message);
+        void onMessageDeleted(String messageId);
         void onReceipt(String messageId, Message.Status status);
         void onSendFailed(String messageId, String reason);
         void onError(String message);
     }
 
     private final Listener listener;
+    private final Context context;
     private final WifiDirectManager wifiDirect;
     private WifiMessageTransport wifiMessages;
     private final BluetoothMessageTransport bluetooth;
@@ -27,6 +30,7 @@ public final class ConnectionManager implements AutoCloseable {
     private Device activeDevice;
 
     public ConnectionManager(@NonNull Context context, @NonNull Listener listener) {
+        this.context = context.getApplicationContext();
         this.listener = listener;
         wifiDirect = new WifiDirectManager(context, new WifiDirectManager.Listener() {
             @Override public void onDeviceFound(Device device) { }
@@ -50,6 +54,9 @@ public final class ConnectionManager implements AutoCloseable {
             @Override public void onMessageReceived(Message message) {
                 listener.onMessageReceived(message);
             }
+            @Override public void onMessageDeleted(String messageId) {
+                listener.onMessageDeleted(messageId);
+            }
             @Override public void onReceipt(String messageId, Message.Status status) {
                 listener.onReceipt(messageId, status);
             }
@@ -65,6 +72,9 @@ public final class ConnectionManager implements AutoCloseable {
             @Override public void onMessageReceived(Message message) {
                 listener.onMessageReceived(message);
             }
+            @Override public void onMessageDeleted(String messageId) {
+                listener.onMessageDeleted(messageId);
+            }
             @Override public void onReceipt(String messageId, Message.Status status) {
                 listener.onReceipt(messageId, status);
             }
@@ -77,14 +87,17 @@ public final class ConnectionManager implements AutoCloseable {
 
     public State getState() { return state; }
 
-    /** Selects the chat peer and starts accepting an incoming Bluetooth connection. */
+    /** Selects the chat peer and prepares its transport to accept an incoming connection. */
     public void prepare(Device device) {
         activeDevice = device;
         if (device.getTransport() == Device.Transport.BLUETOOTH) bluetooth.startListening();
+        else wifiDirect.prepareForConnection();
     }
 
     public void connect(Device device) {
-        prepare(device);
+        // prepare() is called when the chat opens. Do not enqueue a second listener here;
+        // BluetoothMessageTransport also guards this internally for lifecycle races.
+        activeDevice = device;
         setState(State.CONNECTING);
         if (device.getTransport() == Device.Transport.BLUETOOTH) {
             bluetooth.connect(device.getId());
@@ -95,13 +108,22 @@ public final class ConnectionManager implements AutoCloseable {
 
     public void send(Message message) {
         if (activeDevice == null || state != State.CONNECTED) {
-            listener.onSendFailed(message.getId(), "Not connected");
+            listener.onSendFailed(message.getId(), context.getString(R.string.not_connected));
             return;
         }
         if (activeDevice.getTransport() == Device.Transport.BLUETOOTH) {
             bluetooth.send(message);
         } else {
             wifiMessages.send(message);
+        }
+    }
+
+    public void sendDeletion(String messageId) {
+        if (activeDevice == null || state != State.CONNECTED) return;
+        if (activeDevice.getTransport() == Device.Transport.BLUETOOTH) {
+            bluetooth.sendDeletion(messageId);
+        } else {
+            wifiMessages.sendDeletion(messageId);
         }
     }
 

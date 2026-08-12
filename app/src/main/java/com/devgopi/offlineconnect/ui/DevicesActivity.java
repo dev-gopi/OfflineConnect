@@ -10,8 +10,10 @@ import android.widget.Button;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.EditText;
 import android.util.Log;
 import android.view.View;
+import android.view.ViewGroup;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -24,17 +26,25 @@ import androidx.core.view.WindowInsetsCompat;
 import com.devgopi.offlineconnect.R;
 import com.devgopi.offlineconnect.communication.DeviceDiscoveryManager;
 import com.devgopi.offlineconnect.model.Device;
+import com.devgopi.offlineconnect.database.AppDatabase;
+import com.devgopi.offlineconnect.database.RecentDeviceEntity;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** Displays nearby peers and owns discovery only while this screen is active. */
 public final class DevicesActivity extends AppCompatActivity {
     private static final String TAG = "DevicesActivity";
     private final List<Device> devices = new ArrayList<>();
+    private final ExecutorService databaseExecutor = Executors.newSingleThreadExecutor();
     private ArrayAdapter<Device> adapter;
     private DeviceDiscoveryManager discoveryManager;
     private TextView status;
+    private Button scanButton;
+    private View scanProgress;
+    private boolean discovering;
 
     private final ActivityResultLauncher<String[]> permissionRequest =
             registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), result -> {
@@ -52,30 +62,89 @@ public final class DevicesActivity extends AppCompatActivity {
         status = findViewById(R.id.txtDiscoveryStatus);
         ListView list = findViewById(R.id.listDevices);
         list.setEmptyView(findViewById(R.id.txtDevicesEmpty));
-        Button scan = findViewById(R.id.btnScan);
-        adapter = new ArrayAdapter<>(this, R.layout.item_device, R.id.txtDeviceName, devices);
+        scanButton = findViewById(R.id.btnScan);
+        scanProgress = findViewById(R.id.progressDiscovery);
+        adapter = new DeviceAdapter();
         list.setAdapter(adapter);
+        EditText search = findViewById(R.id.editDeviceSearch);
+        SearchClearController.attach(search, findViewById(R.id.btnClearDeviceSearch));
+        search.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                adapter.getFilter().filter(s);
+            }
+            @Override public void afterTextChanged(android.text.Editable s) { }
+        });
+        loadRecentDevices();
 
         discoveryManager = new DeviceDiscoveryManager(this, new DeviceDiscoveryManager.Listener() {
             @Override public void onDevicesChanged(List<Device> found) {
-                devices.clear(); devices.addAll(found); adapter.notifyDataSetChanged();
+                for (Device item : found) {
+                    int index = devices.indexOf(item);
+                    if (index >= 0) devices.set(index, item); else devices.add(item);
+                }
+                adapter.notifyDataSetChanged();
             }
             @Override public void onDiscoveryChanged(boolean active) {
+                discovering = active;
                 status.setText(active ? R.string.scanning : R.string.scan_complete);
+                scanButton.setText(active ? R.string.stop_scan : R.string.scan);
+                scanProgress.setVisibility(active ? View.VISIBLE : View.GONE);
             }
             @Override public void onError(String message) {
+                status.setText(message);
                 Toast.makeText(DevicesActivity.this, message, Toast.LENGTH_SHORT).show();
             }
         });
-        scan.setOnClickListener(view -> requestPermissionsAndScan());
+        scanButton.setOnClickListener(view -> {
+            if (discovering) discoveryManager.stopDiscovery();
+            else requestPermissionsAndScan();
+        });
+        findViewById(R.id.btnBackDevices).setOnClickListener(view -> finish());
         list.setOnItemClickListener((parent, view, position, id) -> {
             Intent intent = new Intent(this, ChatActivity.class);
-            intent.putExtra(ChatActivity.EXTRA_DEVICE, devices.get(position));
+            Device selected = adapter.getItem(position);
+            if (selected == null) return;
+            intent.putExtra(ChatActivity.EXTRA_DEVICE, selected);
+            databaseExecutor.execute(() -> AppDatabase.getInstance(this).recentDeviceDao()
+                    .upsert(RecentDeviceEntity.from(selected)));
             startActivity(intent);
         });
 
         // Wait until view creation is complete before showing the system dialog.
-        scan.post(this::requestPermissionsAndScan);
+        scanButton.post(this::requestPermissionsAndScan);
+    }
+
+    private void loadRecentDevices() {
+        databaseExecutor.execute(() -> {
+            List<RecentDeviceEntity> recent = AppDatabase.getInstance(this)
+                    .recentDeviceDao().getRecent();
+            runOnUiThread(() -> {
+                for (RecentDeviceEntity entity : recent) {
+                    Device item = entity.toDevice();
+                    if (!devices.contains(item)) devices.add(item);
+                }
+                adapter.notifyDataSetChanged();
+            });
+        });
+    }
+
+    private final class DeviceAdapter extends ArrayAdapter<Device> {
+        DeviceAdapter() { super(DevicesActivity.this, R.layout.item_device, devices); }
+
+        @Override public View getView(int position, View reusable, ViewGroup parent) {
+            View row = reusable;
+            if (row == null) row = getLayoutInflater().inflate(R.layout.item_device, parent, false);
+            Device item = getItem(position);
+            ((TextView) row.findViewById(R.id.txtDeviceName)).setText(item.getName());
+            int transport = item.getTransport() == Device.Transport.BLUETOOTH
+                    ? R.string.bluetooth_transport : R.string.wifi_direct_transport;
+            String state = item.isConnected() ? getString(R.string.connected)
+                    : getString(R.string.connection_ready);
+            ((TextView) row.findViewById(R.id.txtDeviceTransport)).setText(
+                    getString(transport) + " · " + state);
+            return row;
+        }
     }
 
     /** Keeps controls clear of gesture navigation and three-button navigation bars. */
@@ -152,6 +221,7 @@ public final class DevicesActivity extends AppCompatActivity {
 
     @Override protected void onDestroy() {
         if (discoveryManager != null) discoveryManager.close();
+        databaseExecutor.shutdown();
         super.onDestroy();
     }
 }

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Shared production UI metrics: accessible targets with restrained visual weight. -->
+    <dimen name="touch_target">48dp</dimen>
+    <dimen name="icon_padding">13dp</dimen>
+    <dimen name="icon_padding_compact">14dp</dimen>
+    <dimen name="screen_horizontal_padding">20dp</dimen>
+    <dimen name="control_height">48dp</dimen>
+    <dimen name="input_corner_radius">14dp</dimen>
+    <dimen name="card_corner_radius">18dp</dimen>
+    <dimen name="message_corner_radius">18dp</dimen>
+</resources>

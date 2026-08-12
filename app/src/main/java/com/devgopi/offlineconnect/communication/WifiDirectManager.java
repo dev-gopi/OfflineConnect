@@ -20,6 +20,7 @@ import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
 
 import com.devgopi.offlineconnect.model.Device;
+import com.devgopi.offlineconnect.R;
 
 import java.net.InetAddress;
 
@@ -56,7 +57,7 @@ public final class WifiDirectManager implements AutoCloseable {
                 int state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE,
                         WifiP2pManager.WIFI_P2P_STATE_DISABLED);
                 if (state != WifiP2pManager.WIFI_P2P_STATE_ENABLED) {
-                    listener.onError("Wi-Fi Direct is turned off");
+                    listener.onError(context.getString(R.string.wifi_direct_turned_off));
                 }
             }
         }
@@ -72,10 +73,10 @@ public final class WifiDirectManager implements AutoCloseable {
         if (foundManager != null) {
             try {
                 foundChannel = foundManager.initialize(this.context, Looper.getMainLooper(),
-                        () -> listener.onError("Wi-Fi Direct channel was lost"));
+                        () -> listener.onError(context.getString(R.string.wifi_direct_channel_lost)));
             } catch (SecurityException exception) {
                 // A malformed manifest or vendor service must not crash device discovery.
-                listener.onError("Wi-Fi Direct permission is unavailable");
+                listener.onError(context.getString(R.string.wifi_direct_permission_unavailable));
             }
         }
         manager = foundManager;
@@ -89,6 +90,15 @@ public final class WifiDirectManager implements AutoCloseable {
         if (!ready()) return;
         registerReceiver();
         discoverPeers(MAX_BUSY_RETRIES);
+    }
+
+    /** Registers for an incoming Wi-Fi Direct invitation without starting peer discovery. */
+    public void prepareForConnection() {
+        if (!ready()) return;
+        registerReceiver();
+        // A group may already exist before this chat opens; query it immediately instead of
+        // relying only on a future broadcast from the vendor Wi-Fi implementation.
+        requestConnectionInfo();
     }
 
     @SuppressLint("MissingPermission")
@@ -110,19 +120,21 @@ public final class WifiDirectManager implements AutoCloseable {
                 }
             });
         } catch (SecurityException exception) {
-            listener.onError("Nearby devices permission was revoked");
+            listener.onError(context.getString(R.string.nearby_permission_revoked));
         }
     }
 
     @SuppressLint("MissingPermission") // ready() verifies the version-specific runtime permission.
     public void connect(String deviceAddress) {
         if (!ready()) return;
+        registerReceiver();
         WifiP2pConfig config = new WifiP2pConfig();
         config.deviceAddress = deviceAddress;
         try {
-            manager.connect(channel, config, action("Connection request sent", false));
+            manager.connect(channel, config,
+                    action(context.getString(R.string.wifi_connection_request), false));
         } catch (SecurityException exception) {
-            listener.onError("Nearby devices permission was revoked");
+            listener.onError(context.getString(R.string.nearby_permission_revoked));
         }
     }
 
@@ -130,20 +142,20 @@ public final class WifiDirectManager implements AutoCloseable {
         try {
             if (manager != null && channel != null && hasPermission()) {
                 manager.stopPeerDiscovery(channel,
-                        action("Wi-Fi Direct discovery stopped", false));
+                        action(context.getString(R.string.wifi_discovery_stopped), false));
             }
         } catch (SecurityException exception) {
-            listener.onError("Nearby devices permission was revoked");
+            listener.onError(context.getString(R.string.nearby_permission_revoked));
         }
     }
 
     private boolean ready() {
-        if (!isSupported()) { listener.onError("Wi-Fi Direct is not supported"); return false; }
+        if (!isSupported()) { listener.onError(context.getString(R.string.wifi_direct_unsupported)); return false; }
         if (wifiManager == null || !wifiManager.isWifiEnabled()) {
             listener.onError(context.getString(com.devgopi.offlineconnect.R.string.wifi_disabled));
             return false;
         }
-        if (!hasPermission()) { listener.onError("Nearby devices permission is required"); return false; }
+        if (!hasPermission()) { listener.onError(context.getString(R.string.nearby_permission_required)); return false; }
         return true;
     }
 
@@ -169,7 +181,7 @@ public final class WifiDirectManager implements AutoCloseable {
                 }
             });
         } catch (SecurityException exception) {
-            listener.onError("Nearby devices permission was revoked");
+            listener.onError(context.getString(R.string.nearby_permission_revoked));
         }
     }
 
@@ -183,7 +195,7 @@ public final class WifiDirectManager implements AutoCloseable {
                 }
             });
         } catch (SecurityException exception) {
-            listener.onError("Nearby devices permission was revoked");
+            listener.onError(context.getString(R.string.nearby_permission_revoked));
         }
     }
 
@@ -194,7 +206,8 @@ public final class WifiDirectManager implements AutoCloseable {
             }
             @Override public void onFailure(int reason) {
                 listener.onDiscoveryChanged(false);
-                listener.onError(successMessage + " failed: " + reasonMessage(reason));
+                listener.onError(context.getString(R.string.wifi_operation_failed,
+                        successMessage, reasonMessage(reason)));
             }
         };
     }
@@ -206,7 +219,7 @@ public final class WifiDirectManager implements AutoCloseable {
         if (reason == WifiP2pManager.P2P_UNSUPPORTED) {
             return context.getString(com.devgopi.offlineconnect.R.string.wifi_direct_unsupported);
         }
-        return "Wi-Fi Direct operation failed";
+        return context.getString(R.string.wifi_operation_unknown_error);
     }
 
     private boolean hasPermission() {

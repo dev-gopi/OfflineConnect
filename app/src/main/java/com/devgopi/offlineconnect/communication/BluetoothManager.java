@@ -25,6 +25,7 @@ import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
 
 import com.devgopi.offlineconnect.model.Device;
+import com.devgopi.offlineconnect.R;
 
 import java.util.Collections;
 import java.util.UUID;
@@ -69,7 +70,7 @@ public final class BluetoothManager implements AutoCloseable {
 
         @Override public void onScanFailed(int errorCode) {
             leScanning = false;
-            listener.onError("Bluetooth LE scan failed (code " + errorCode + ")");
+            listener.onError(context.getString(R.string.bluetooth_le_scan_failed, errorCode));
         }
     };
 
@@ -81,7 +82,7 @@ public final class BluetoothManager implements AutoCloseable {
         @Override public void onStartFailure(int errorCode) {
             advertising = false;
             if (errorCode != ADVERTISE_FAILED_ALREADY_STARTED) {
-                listener.onError("Bluetooth advertising failed (code " + errorCode + ")");
+                listener.onError(context.getString(R.string.bluetooth_advertising_failed, errorCode));
             }
         }
     };
@@ -98,19 +99,19 @@ public final class BluetoothManager implements AutoCloseable {
 
     @SuppressLint("MissingPermission") // Permission is checked immediately before radio access.
     public void startDiscovery() {
-        if (adapter == null) { listener.onError("Bluetooth is not supported"); return; }
+        if (adapter == null) { listener.onError(context.getString(R.string.bluetooth_not_supported)); return; }
         if (!hasScanPermission() || !hasConnectPermission()) {
-            listener.onError("Bluetooth permission is required"); return;
+            listener.onError(context.getString(R.string.bluetooth_permission_required)); return;
         }
-        if (!adapter.isEnabled()) { listener.onError("Bluetooth is turned off"); return; }
+        if (!adapter.isEnabled()) { listener.onError(context.getString(R.string.bluetooth_turned_off)); return; }
         registerReceiver();
         try {
             publishBondedDevices();
             startBleDiscovery();
             if (adapter.isDiscovering()) adapter.cancelDiscovery();
-            if (!adapter.startDiscovery()) listener.onError("Bluetooth discovery could not start");
+            if (!adapter.startDiscovery()) listener.onError(context.getString(R.string.bluetooth_discovery_failed));
         } catch (SecurityException exception) {
-            listener.onError("Bluetooth permission was revoked");
+            listener.onError(context.getString(R.string.bluetooth_permission_revoked));
         }
     }
 
@@ -122,7 +123,7 @@ public final class BluetoothManager implements AutoCloseable {
                 adapter.cancelDiscovery();
             }
         } catch (SecurityException exception) {
-            listener.onError("Bluetooth permission was revoked");
+            listener.onError(context.getString(R.string.bluetooth_permission_revoked));
         }
     }
 
@@ -175,7 +176,7 @@ public final class BluetoothManager implements AutoCloseable {
             listener.onDeviceFound(new Device(peer.getAddress(), peer.getName(),
                     Device.Transport.BLUETOOTH, false));
         } catch (SecurityException exception) {
-            listener.onError("Bluetooth permission was revoked");
+            listener.onError(context.getString(R.string.bluetooth_permission_revoked));
         }
     }
 

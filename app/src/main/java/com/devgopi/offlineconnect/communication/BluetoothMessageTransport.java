@@ -16,6 +16,9 @@ import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
 
 import com.devgopi.offlineconnect.model.Message;
+import com.devgopi.offlineconnect.R;
+import com.devgopi.offlineconnect.database.MediaEntity;
+import com.devgopi.offlineconnect.database.MediaRepository;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -41,12 +44,16 @@ public final class BluetoothMessageTransport implements AutoCloseable {
     private static final byte VOICE = 2;
     private static final byte DELIVERED = 3;
     private static final byte READ = 4;
+    private static final byte DELETED = 5;
+    private static final byte IMAGE = 6;
+    private static final byte VIDEO = 7;
 
     public interface Listener {
         void onConnecting();
         void onConnected(String peerAddress);
         void onDisconnected();
         void onMessageReceived(Message message);
+        void onMessageDeleted(String messageId);
         void onReceipt(String messageId, Message.Status status);
         void onSendFailed(String messageId, String reason);
         void onError(String message);
@@ -58,6 +65,8 @@ public final class BluetoothMessageTransport implements AutoCloseable {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService ioExecutor = Executors.newCachedThreadPool();
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicBoolean listening = new AtomicBoolean();
+    private final AtomicBoolean connecting = new AtomicBoolean();
     private final Object writeLock = new Object();
     private volatile BluetoothServerSocket serverSocket;
     private volatile BluetoothSocket socket;
@@ -73,16 +82,27 @@ public final class BluetoothMessageTransport implements AutoCloseable {
 
     @SuppressLint("MissingPermission")
     public void startListening() {
-        if (!ready() || serverSocket != null) return;
+        if (!ready() || isConnected() || !listening.compareAndSet(false, true)) return;
         ioExecutor.execute(() -> {
+            BluetoothServerSocket listeningSocket = null;
             try {
-                serverSocket = adapter.listenUsingRfcommWithServiceRecord(SERVICE_NAME, SERVICE_UUID);
+                listeningSocket = adapter.listenUsingRfcommWithServiceRecord(
+                        SERVICE_NAME, SERVICE_UUID);
+                serverSocket = listeningSocket;
                 while (!closed.get() && socket == null) {
-                    BluetoothSocket accepted = serverSocket.accept();
+                    BluetoothSocket accepted = listeningSocket.accept();
                     if (accepted != null) attach(accepted);
                 }
             } catch (IOException | SecurityException exception) {
-                if (!closed.get()) postError("Bluetooth listening failed");
+                // attach() deliberately closes accept() after a session connects.
+                // That produces an IOException and is not a user-visible failure.
+                if (!closed.get() && !isConnected()) {
+                    postError(context.getString(R.string.bluetooth_listening_failed));
+                }
+            } finally {
+                if (serverSocket == listeningSocket) serverSocket = null;
+                closeQuietly(listeningSocket);
+                listening.set(false);
             }
         });
     }
@@ -91,6 +111,7 @@ public final class BluetoothMessageTransport implements AutoCloseable {
     public void connect(String address) {
         if (!ready()) return;
         startListening();
+        if (isConnected() || !connecting.compareAndSet(false, true)) return;
         post(listener::onConnecting);
         ioExecutor.execute(() -> {
             BluetoothSocket candidate = null;
@@ -102,8 +123,21 @@ public final class BluetoothMessageTransport implements AutoCloseable {
                 attach(candidate);
             } catch (IOException | IllegalArgumentException | SecurityException exception) {
                 closeQuietly(candidate);
-                postError("Bluetooth connection failed. Ensure both phones opened this chat.");
-                post(listener::onDisconnected);
+                // Both phones may press Connect together. If the incoming socket won that race,
+                // the failed outgoing socket is expected and must not undo the live connection.
+                if (!closed.get() && !isConnected()) {
+                    post(() -> {
+                        // Recheck on the main thread because attach() may complete after this
+                        // worker catches its exception but before UI callbacks are delivered.
+                        if (!closed.get() && !isConnected()) {
+                            listener.onError(context.getString(
+                                    R.string.bluetooth_connection_failed));
+                            listener.onDisconnected();
+                        }
+                    });
+                }
+            } finally {
+                connecting.set(false);
             }
         });
     }
@@ -119,20 +153,34 @@ public final class BluetoothMessageTransport implements AutoCloseable {
                 byte type;
                 byte[] payload;
                 long duration = 0L;
-                if (message.getBody().startsWith("voice://")) {
-                    type = VOICE;
-                    VoiceMetadata voice = VoiceMetadata.parse(message.getBody().substring(8));
-                    File file = new File(voice.path);
+                if (message.getBody().startsWith("voice://")
+                        || message.getBody().startsWith("image://")
+                        || message.getBody().startsWith("video://")) {
+                    boolean voiceMessage = message.getBody().startsWith("voice://");
+                    type = voiceMessage ? VOICE : message.getBody().startsWith("image://")
+                            ? IMAGE : VIDEO;
+                    File file;
+                    if (voiceMessage) {
+                        VoiceMetadata voice = VoiceMetadata.parse(message.getBody().substring(8));
+                        file = new File(voice.path);
+                        duration = voice.duration;
+                    } else {
+                        String mediaId = mediaId(message.getBody());
+                        MediaEntity media = MediaRepository.find(context, mediaId);
+                        if (media == null) throw new IOException("Media file is unavailable");
+                        file = new File(media.filePath);
+                        duration = media.durationMs;
+                    }
                     if (!file.isFile() || file.length() > MAX_PAYLOAD_BYTES) {
-                        throw new IOException("Voice recording is unavailable or too large");
+                        throw new IOException(context.getString(R.string.voice_unavailable_or_large));
                     }
                     payload = java.nio.file.Files.readAllBytes(file.toPath());
-                    duration = voice.duration;
                 } else {
                     type = TEXT;
                     payload = message.getBody().getBytes(StandardCharsets.UTF_8);
                 }
-                writeFrame(type, message.getId(), message.getTimestamp(), duration, payload);
+                writeFrame(type, message.getId(), message.getTimestamp(), duration,
+                        message.isEdited(), payload);
                 post(() -> listener.onReceipt(message.getId(), Message.Status.SENT));
             } catch (IOException | RuntimeException exception) {
                 post(() -> listener.onSendFailed(message.getId(), exception.getMessage()));
@@ -142,7 +190,14 @@ public final class BluetoothMessageTransport implements AutoCloseable {
 
     private void sendReceipt(byte type, String messageId) {
         ioExecutor.execute(() -> {
-            try { writeFrame(type, messageId, 0L, 0L, new byte[0]); }
+            try { writeFrame(type, messageId, 0L, 0L, false, new byte[0]); }
+            catch (IOException ignored) { }
+        });
+    }
+
+    public void sendDeletion(String messageId) {
+        ioExecutor.execute(() -> {
+            try { writeFrame(DELETED, messageId, 0L, 0L, false, new byte[0]); }
             catch (IOException ignored) { }
         });
     }
@@ -155,6 +210,7 @@ public final class BluetoothMessageTransport implements AutoCloseable {
         output = new DataOutputStream(new BufferedOutputStream(connected.getOutputStream()));
         closeQuietly(serverSocket);
         serverSocket = null;
+        listening.set(false);
         post(() -> listener.onConnected(connected.getRemoteDevice().getAddress()));
         ioExecutor.execute(() -> readLoop(connected));
     }
@@ -166,7 +222,7 @@ public final class BluetoothMessageTransport implements AutoCloseable {
         } catch (EOFException ignored) {
             // Normal remote disconnect.
         } catch (IOException | RuntimeException exception) {
-            if (!closed.get()) postError("Bluetooth connection was lost");
+            if (!closed.get()) postError(context.getString(R.string.bluetooth_connection_lost));
         } finally {
             if (connected == socket) {
                 closeQuietly(connected);
@@ -184,6 +240,7 @@ public final class BluetoothMessageTransport implements AutoCloseable {
         String id = input.readUTF();
         long timestamp = input.readLong();
         long duration = input.readLong();
+        boolean edited = input.readBoolean();
         int length = input.readInt();
         if (length < 0 || length > MAX_PAYLOAD_BYTES) throw new IOException("Invalid payload size");
         byte[] payload = new byte[length];
@@ -194,33 +251,47 @@ public final class BluetoothMessageTransport implements AutoCloseable {
             post(() -> listener.onReceipt(id, status));
             return;
         }
+        if (type == DELETED) {
+            post(() -> listener.onMessageDeleted(id));
+            return;
+        }
         String body;
         if (type == TEXT) {
             body = new String(payload, StandardCharsets.UTF_8);
-        } else if (type == VOICE) {
-            File voice = new File(context.getFilesDir(), "received_" + id + ".m4a");
-            try (FileOutputStream stream = new FileOutputStream(voice)) { stream.write(payload); }
-            body = "voice://" + voice.getAbsolutePath() + "|" + duration;
+        } else if (type == VOICE || type == IMAGE || type == VIDEO) {
+            String extension = type == VOICE ? ".m4a" : type == IMAGE ? ".jpg" : ".mp4";
+            String prefix = type == VOICE ? "voice://" : type == IMAGE ? "image://" : "video://";
+            File media = new File(context.getFilesDir(), "received_" + id + extension);
+            try (FileOutputStream stream = new FileOutputStream(media)) { stream.write(payload); }
+            if (type == VOICE) body = prefix + media.getAbsolutePath() + "|" + duration;
+            else {
+                MediaRepository.store(context, new MediaEntity(id, media.getAbsolutePath(),
+                        type == IMAGE ? "image/jpeg" : "video/mp4", media.length(), duration));
+                body = prefix + id + "|" + MediaRepository.createThumbnail(
+                        media.getAbsolutePath(), type == VIDEO);
+            }
         } else {
             throw new IOException("Unknown Bluetooth frame type");
         }
         Message message = new Message(id, socket.getRemoteDevice().getAddress(), body,
-                timestamp, false, Message.Status.RECEIVED);
+                timestamp, false, Message.Status.RECEIVED, edited);
         post(() -> listener.onMessageReceived(message));
         sendReceipt(DELIVERED, id);
         sendReceipt(READ, id); // Chat is visible while this activity-owned session is active.
     }
 
-    private void writeFrame(byte type, String id, long timestamp, long duration, byte[] payload)
+    private void writeFrame(byte type, String id, long timestamp, long duration, boolean edited,
+                            byte[] payload)
             throws IOException {
         synchronized (writeLock) {
             DataOutputStream stream = output;
-            if (!isConnected() || stream == null) throw new IOException("Not connected");
+            if (!isConnected() || stream == null) throw new IOException(context.getString(R.string.not_connected));
             stream.writeInt(MAGIC);
             stream.writeByte(type);
             stream.writeUTF(id);
             stream.writeLong(timestamp);
             stream.writeLong(duration);
+            stream.writeBoolean(edited);
             stream.writeInt(payload.length);
             stream.write(payload);
             stream.flush();
@@ -228,11 +299,11 @@ public final class BluetoothMessageTransport implements AutoCloseable {
     }
 
     private boolean ready() {
-        if (adapter == null) { postError("Bluetooth is not supported"); return false; }
+        if (adapter == null) { postError(context.getString(R.string.bluetooth_not_supported)); return false; }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT)
                         != PackageManager.PERMISSION_GRANTED) {
-            postError("Bluetooth connection permission is required");
+            postError(context.getString(R.string.bluetooth_connect_permission_required));
             return false;
         }
         return true;
@@ -248,6 +319,8 @@ public final class BluetoothMessageTransport implements AutoCloseable {
         serverSocket = null;
         socket = null;
         output = null;
+        listening.set(false);
+        connecting.set(false);
         ioExecutor.shutdownNow();
         mainHandler.removeCallbacksAndMessages(null);
     }
@@ -271,5 +344,10 @@ public final class BluetoothMessageTransport implements AutoCloseable {
                 return new VoiceMetadata(value.substring(0, separator), 0L);
             }
         }
+    }
+
+    private static String mediaId(String body) {
+        int separator = body.indexOf('|', 8);
+        return separator < 0 ? body.substring(8) : body.substring(8, separator);
     }
 }

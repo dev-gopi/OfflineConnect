@@ -7,6 +7,9 @@ import android.os.Looper;
 import androidx.annotation.NonNull;
 
 import com.devgopi.offlineconnect.model.Message;
+import com.devgopi.offlineconnect.R;
+import com.devgopi.offlineconnect.database.MediaEntity;
+import com.devgopi.offlineconnect.database.MediaRepository;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -30,18 +33,24 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class WifiMessageTransport implements AutoCloseable {
     private static final int PORT = 28991;
     private static final int CONNECT_TIMEOUT_MS = 15_000;
+    private static final int CONNECT_RETRY_COUNT = 6;
+    private static final long CONNECT_RETRY_DELAY_MS = 500L;
     private static final int MAGIC = 0x4F434D31;
     private static final int MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
     private static final byte TEXT = 1;
     private static final byte VOICE = 2;
     private static final byte DELIVERED = 3;
     private static final byte READ = 4;
+    private static final byte DELETED = 5;
+    private static final byte IMAGE = 6;
+    private static final byte VIDEO = 7;
 
     public interface Listener {
         void onConnecting();
         void onConnected();
         void onDisconnected();
         void onMessageReceived(Message message);
+        void onMessageDeleted(String messageId);
         void onReceipt(String messageId, Message.Status status);
         void onSendFailed(String messageId, String reason);
         void onError(String message);
@@ -52,6 +61,8 @@ public final class WifiMessageTransport implements AutoCloseable {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicBoolean serverStarting = new AtomicBoolean();
+    private final AtomicBoolean clientConnecting = new AtomicBoolean();
     private final Object writeLock = new Object();
     private volatile ServerSocket serverSocket;
     private volatile Socket socket;
@@ -63,7 +74,7 @@ public final class WifiMessageTransport implements AutoCloseable {
     }
 
     public void startServer() {
-        if (serverSocket != null || isConnected()) return;
+        if (isConnected() || !serverStarting.compareAndSet(false, true)) return;
         post(listener::onConnecting);
         executor.execute(() -> {
             try {
@@ -73,26 +84,54 @@ public final class WifiMessageTransport implements AutoCloseable {
                 serverSocket = server;
                 attach(server.accept());
             } catch (IOException exception) {
-                if (!closed.get()) postError("Wi-Fi message server failed");
+                if (!closed.get()) postError(context.getString(R.string.wifi_message_server_failed));
+            } finally {
+                serverStarting.set(false);
             }
         });
     }
 
     public void connect(InetAddress groupOwnerAddress) {
-        if (isConnected()) return;
+        if (isConnected() || !clientConnecting.compareAndSet(false, true)) return;
         post(listener::onConnecting);
         executor.execute(() -> {
+            try {
+                connectWithRetry(groupOwnerAddress);
+            } catch (IOException exception) {
+                if (!closed.get() && !isConnected()) {
+                    postError(context.getString(R.string.wifi_message_channel_failed));
+                    post(listener::onDisconnected);
+                }
+            } finally {
+                clientConnecting.set(false);
+            }
+        });
+    }
+
+    /** Allows the group-owner phone time to bind its TCP server after P2P negotiation. */
+    private void connectWithRetry(InetAddress groupOwnerAddress) throws IOException {
+        IOException lastFailure = null;
+        for (int attempt = 0; attempt < CONNECT_RETRY_COUNT && !closed.get(); attempt++) {
             Socket candidate = new Socket();
             try {
                 candidate.connect(new InetSocketAddress(groupOwnerAddress, PORT),
                         CONNECT_TIMEOUT_MS);
                 attach(candidate);
+                return;
             } catch (IOException exception) {
+                lastFailure = exception;
                 closeQuietly(candidate);
-                postError("Could not open the Wi-Fi Direct message channel");
-                post(listener::onDisconnected);
+                if (attempt + 1 < CONNECT_RETRY_COUNT) {
+                    try {
+                        Thread.sleep(CONNECT_RETRY_DELAY_MS);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("Wi-Fi connection interrupted", interrupted);
+                    }
+                }
             }
-        });
+        }
+        throw lastFailure == null ? new IOException("Wi-Fi connection closed") : lastFailure;
     }
 
     public boolean isConnected() {
@@ -106,24 +145,44 @@ public final class WifiMessageTransport implements AutoCloseable {
                 byte type;
                 byte[] payload;
                 long duration = 0L;
-                if (message.getBody().startsWith("voice://")) {
-                    type = VOICE;
-                    VoiceMetadata voice = VoiceMetadata.parse(message.getBody().substring(8));
-                    File file = new File(voice.path);
+                if (message.getBody().startsWith("voice://")
+                        || message.getBody().startsWith("image://")
+                        || message.getBody().startsWith("video://")) {
+                    boolean voiceMessage = message.getBody().startsWith("voice://");
+                    type = voiceMessage ? VOICE : message.getBody().startsWith("image://")
+                            ? IMAGE : VIDEO;
+                    File file;
+                    if (voiceMessage) {
+                        VoiceMetadata voice = VoiceMetadata.parse(message.getBody().substring(8));
+                        file = new File(voice.path);
+                        duration = voice.duration;
+                    } else {
+                        MediaEntity media = MediaRepository.find(context, mediaId(message.getBody()));
+                        if (media == null) throw new IOException("Media file is unavailable");
+                        file = new File(media.filePath);
+                        duration = media.durationMs;
+                    }
                     if (!file.isFile() || file.length() > MAX_PAYLOAD_BYTES) {
-                        throw new IOException("Voice recording is unavailable or too large");
+                        throw new IOException(context.getString(R.string.voice_unavailable_or_large));
                     }
                     payload = Files.readAllBytes(file.toPath());
-                    duration = voice.duration;
                 } else {
                     type = TEXT;
                     payload = message.getBody().getBytes(StandardCharsets.UTF_8);
                 }
-                writeFrame(type, message.getId(), message.getTimestamp(), duration, payload);
+                writeFrame(type, message.getId(), message.getTimestamp(), duration,
+                        message.isEdited(), payload);
                 post(() -> listener.onReceipt(message.getId(), Message.Status.SENT));
             } catch (IOException | RuntimeException exception) {
                 post(() -> listener.onSendFailed(message.getId(), exception.getMessage()));
             }
+        });
+    }
+
+    public void sendDeletion(String messageId) {
+        executor.execute(() -> {
+            try { writeFrame(DELETED, messageId, 0L, 0L, false, new byte[0]); }
+            catch (IOException ignored) { }
         });
     }
 
@@ -144,7 +203,7 @@ public final class WifiMessageTransport implements AutoCloseable {
             while (!closed.get() && connected == socket) readFrame(input);
         } catch (EOFException ignored) {
         } catch (IOException | RuntimeException exception) {
-            if (!closed.get()) postError("Wi-Fi Direct connection was lost");
+            if (!closed.get()) postError(context.getString(R.string.wifi_connection_lost));
         } finally {
             if (connected == socket) {
                 closeQuietly(connected);
@@ -161,6 +220,7 @@ public final class WifiMessageTransport implements AutoCloseable {
         String id = input.readUTF();
         long timestamp = input.readLong();
         long duration = input.readLong();
+        boolean edited = input.readBoolean();
         int length = input.readInt();
         if (length < 0 || length > MAX_PAYLOAD_BYTES) throw new IOException("Invalid payload size");
         byte[] payload = new byte[length];
@@ -170,18 +230,30 @@ public final class WifiMessageTransport implements AutoCloseable {
             post(() -> listener.onReceipt(id, status));
             return;
         }
+        if (type == DELETED) {
+            post(() -> listener.onMessageDeleted(id));
+            return;
+        }
         String body;
         if (type == TEXT) {
             body = new String(payload, StandardCharsets.UTF_8);
-        } else if (type == VOICE) {
-            File voice = new File(context.getFilesDir(), "wifi_received_" + id + ".m4a");
-            try (FileOutputStream stream = new FileOutputStream(voice)) { stream.write(payload); }
-            body = "voice://" + voice.getAbsolutePath() + "|" + duration;
+        } else if (type == VOICE || type == IMAGE || type == VIDEO) {
+            String extension = type == VOICE ? ".m4a" : type == IMAGE ? ".jpg" : ".mp4";
+            String prefix = type == VOICE ? "voice://" : type == IMAGE ? "image://" : "video://";
+            File media = new File(context.getFilesDir(), "wifi_received_" + id + extension);
+            try (FileOutputStream stream = new FileOutputStream(media)) { stream.write(payload); }
+            if (type == VOICE) body = prefix + media.getAbsolutePath() + "|" + duration;
+            else {
+                MediaRepository.store(context, new MediaEntity(id, media.getAbsolutePath(),
+                        type == IMAGE ? "image/jpeg" : "video/mp4", media.length(), duration));
+                body = prefix + id + "|" + MediaRepository.createThumbnail(
+                        media.getAbsolutePath(), type == VIDEO);
+            }
         } else {
             throw new IOException("Unknown Wi-Fi message type");
         }
         Message message = new Message(id, "wifi-direct-peer", body, timestamp,
-                false, Message.Status.RECEIVED);
+                false, Message.Status.RECEIVED, edited);
         post(() -> listener.onMessageReceived(message));
         sendReceipt(DELIVERED, id);
         sendReceipt(READ, id);
@@ -189,21 +261,23 @@ public final class WifiMessageTransport implements AutoCloseable {
 
     private void sendReceipt(byte type, String id) {
         executor.execute(() -> {
-            try { writeFrame(type, id, 0L, 0L, new byte[0]); }
+            try { writeFrame(type, id, 0L, 0L, false, new byte[0]); }
             catch (IOException ignored) { }
         });
     }
 
-    private void writeFrame(byte type, String id, long timestamp, long duration, byte[] payload)
+    private void writeFrame(byte type, String id, long timestamp, long duration, boolean edited,
+                            byte[] payload)
             throws IOException {
         synchronized (writeLock) {
             DataOutputStream stream = output;
-            if (!isConnected() || stream == null) throw new IOException("Not connected");
+            if (!isConnected() || stream == null) throw new IOException(context.getString(R.string.not_connected));
             stream.writeInt(MAGIC);
             stream.writeByte(type);
             stream.writeUTF(id);
             stream.writeLong(timestamp);
             stream.writeLong(duration);
+            stream.writeBoolean(edited);
             stream.writeInt(payload.length);
             stream.write(payload);
             stream.flush();
@@ -220,6 +294,8 @@ public final class WifiMessageTransport implements AutoCloseable {
         serverSocket = null;
         socket = null;
         output = null;
+        serverStarting.set(false);
+        clientConnecting.set(false);
         executor.shutdownNow();
         mainHandler.removeCallbacksAndMessages(null);
     }
@@ -243,5 +319,10 @@ public final class WifiMessageTransport implements AutoCloseable {
                 return new VoiceMetadata(value.substring(0, separator), 0L);
             }
         }
+    }
+
+    private static String mediaId(String body) {
+        int separator = body.indexOf('|', 8);
+        return separator < 0 ? body.substring(8) : body.substring(8, separator);
     }
 }
