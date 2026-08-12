@@ -23,6 +23,7 @@ The project is written in Java and targets Android 8.0 (API 26) and newer.
 - Show typing presence while a peer is connected
 - Store recent Bluetooth peers for faster reopening
 - Use a categorized emoji picker
+- Optionally lock the app with Android's system PIN, pattern, password, or supported biometric
 
 ## Connection options
 
@@ -76,6 +77,10 @@ Frame metadata is authenticated as additional authenticated data, so modified he
 Message bodies are encrypted with AES-256-GCM before Room stores them. The non-exportable encryption key is generated in Android Keystore. Message ID, peer ID, timestamp, and direction are authenticated as additional data.
 
 Media metadata is stored separately from message records. Media files are stored in the application's private files directory; the files themselves are not currently encrypted at rest.
+
+### App lock
+
+App Lock can be enabled from the Settings button on the home screen. After the splash screen, Android requires the device's configured screen-lock credential before MainActivity reveals its content. Offline Connect stores only the enabled preference; PINs, patterns, passwords, and biometric data remain under Android's control.
 
 ## Architecture
 
@@ -156,7 +161,8 @@ Contacts are selected or added through Android system activities, so the app doe
 ## Media handling
 
 - Selected images are resized to a maximum side of 1920 pixels and encoded as JPEG.
-- Videos are copied into private app storage and checked against the transfer limit.
+- Videos are hardware-transcoded before sending to 720p H.264/AAC MP4 at a target video bitrate of approximately 2 Mbps.
+- Video export reports progress and can be cancelled while the hardware codec is running.
 - Individual media transfers are limited to 16 MB.
 - Message records contain media IDs and thumbnail metadata rather than raw media bytes.
 - Received media remains private until the user chooses **Save to device**.
@@ -190,7 +196,7 @@ Contacts are selected or added through Android system activities, so the app doe
 - Chats are one-to-one; group conversations are not implemented.
 - Peer identity verification is not yet available.
 - Media files are private but are not encrypted at rest.
-- Video transcoding is not implemented; large videos must already fit the 16 MB limit.
+- Media transfers remain limited to 16 MB after compression; long videos can still exceed that limit.
 - Reliable background listening would require a foreground service; the current connection lifecycle is activity-owned.
 - Wi-Fi Direct behavior varies between Android manufacturers.
 

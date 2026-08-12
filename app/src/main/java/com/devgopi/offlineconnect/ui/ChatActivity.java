@@ -94,6 +94,7 @@ import java.util.concurrent.Executors;
 
 
 /** Chat UI with text messages, hold-to-record voice notes, and receipt states. */
+@SuppressLint("UnsafeOptInUsageError") // Media3 Transformer is isolated to video preparation.
 public final class ChatActivity extends AppCompatActivity {
     public static final String EXTRA_DEVICE = "com.devgopi.offlineconnect.DEVICE";
     private static final String TAG = "ChatActivity";
@@ -104,6 +105,8 @@ public final class ChatActivity extends AppCompatActivity {
     private static final String LOCATION_PREFIX = "location://";
     private static final String PREPARING_MEDIA_PREFIX = "preparing-media://";
     private static final long MAX_MEDIA_BYTES = 16L * 1024L * 1024L;
+    private static final int VIDEO_EXPORT_HEIGHT = 720;
+    private static final int VIDEO_EXPORT_BITRATE = 2_000_000;
     private static final float CANCEL_DISTANCE_DP = 56f;
     private static final float LOCK_DISTANCE_DP = 90f;
     private static final int HISTORY_PAGE_SIZE = 40;
@@ -116,6 +119,12 @@ public final class ChatActivity extends AppCompatActivity {
     private final Map<String, Message> messages = new HashMap<>();
     private final java.util.Set<String> cancelledMedia =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final Map<String, androidx.media3.transformer.Transformer> activeVideoExports =
+            new HashMap<>();
+    private final Map<String, Runnable> videoProgressTasks = new HashMap<>();
+    private final Map<String, File> videoExportFiles = new HashMap<>();
+    private final android.os.Handler videoExportHandler =
+            new android.os.Handler(android.os.Looper.getMainLooper());
     private final java.util.Set<String> starredMessageIds = new HashSet<>();
     private final java.util.Set<String> pinnedMessageIds = new HashSet<>();
     private final EncryptionManager encryption = new EncryptionManager();
@@ -1391,6 +1400,7 @@ public final class ChatActivity extends AppCompatActivity {
         Message message = messages.get(messageId);
         if (message == null) return;
         cancelledMedia.add(messageId);
+        cancelVideoExport(messageId, true);
         connectionManager.cancelMediaTransfer(messageId);
         if (message.getBody().startsWith(PREPARING_MEDIA_PREFIX)) {
             removeTransientMessage(messageId);
@@ -1614,13 +1624,16 @@ public final class ChatActivity extends AppCompatActivity {
                 Message.Status.PENDING);
         showMessage(preparing);
         updateTransferProgress(preparing.getId(), 5, true);
+        if (!image) {
+            startVideoCompression(uri, preparing);
+            return;
+        }
         databaseExecutor.execute(() -> {
-            File destination = new File(getFilesDir(), (image ? "image_" : "video_")
-                    + System.currentTimeMillis() + (image ? ".jpg" : ".mp4"));
+            File destination = new File(getFilesDir(), "image_"
+                    + System.currentTimeMillis() + ".jpg");
             try {
                 runOnUiThread(() -> updateTransferProgress(preparing.getId(), 15, true));
-                if (image) compressImage(uri, destination);
-                else copyUri(uri, destination);
+                compressImage(uri, destination);
                 if (cancelledMedia.remove(preparing.getId())) {
                     if (destination.exists() && !destination.delete()) {
                         Log.w(TAG, "Could not remove cancelled attachment");
@@ -1633,20 +1646,20 @@ public final class ChatActivity extends AppCompatActivity {
                     if (!destination.delete()) Log.w(TAG, "Could not remove oversized media");
                     runOnUiThread(() -> {
                         removeTransientMessage(preparing.getId());
-                        Toast.makeText(this, image ? R.string.media_prepare_failed
-                                : R.string.video_too_large, Toast.LENGTH_LONG).show();
+                        Toast.makeText(this, R.string.media_prepare_failed,
+                                Toast.LENGTH_LONG).show();
                     });
                     return;
                 }
                 String thumbnail = MediaRepository.createThumbnail(destination.getAbsolutePath(),
-                        !image);
+                        false);
                 runOnUiThread(() -> updateTransferProgress(preparing.getId(), 100, true));
-                String body = (image ? IMAGE_PREFIX : VIDEO_PREFIX) + preparing.getId() + "|"
+                String body = IMAGE_PREFIX + preparing.getId() + "|"
                         + thumbnail;
                 Message mediaMessage = new Message(preparing.getId(), device.getId(), body,
                         preparing.getTimestamp(), true, Message.Status.PENDING);
                 MediaRepository.store(this, new MediaEntity(preparing.getId(),
-                        destination.getAbsolutePath(), image ? "image/jpeg" : "video/mp4",
+                        destination.getAbsolutePath(), "image/jpeg",
                         destination.length(), 0L));
                 runOnUiThread(() -> {
                     if (cancelledMedia.remove(preparing.getId())) {
@@ -1667,6 +1680,237 @@ public final class ChatActivity extends AppCompatActivity {
                 });
             }
         });
+    }
+
+    /** Hardware-accelerated 720p H.264/AAC export optimized for fast local sharing. */
+    @androidx.media3.common.util.UnstableApi
+    private void startVideoCompression(Uri uri, Message preparing) {
+        String messageId = preparing.getId();
+        File destination = new File(getFilesDir(), "video_"
+                + System.currentTimeMillis() + ".mp4");
+        videoExportFiles.put(messageId, destination);
+        databaseExecutor.execute(() -> {
+            try {
+                VideoInfo info = inspectVideo(uri);
+                if (info.canCopyWithoutTranscoding()) {
+                    runOnUiThread(() -> updateTransferProgress(messageId, 25, true));
+                    copyUri(uri, destination);
+                    runOnUiThread(() -> finishVideoCompression(
+                            preparing, destination, info.durationMs));
+                } else {
+                    runOnUiThread(() -> startVideoTranscode(uri, preparing, destination));
+                }
+            } catch (IOException | RuntimeException exception) {
+                runOnUiThread(() -> failVideoCompression(messageId, destination, exception));
+            }
+        });
+    }
+
+    @androidx.media3.common.util.UnstableApi
+    private void startVideoTranscode(Uri uri, Message preparing, File destination) {
+        String messageId = preparing.getId();
+        if (cancelledMedia.remove(messageId)) {
+            deleteFileQuietly(destination);
+            return;
+        }
+        androidx.media3.transformer.EditedMediaItem edited =
+                new androidx.media3.transformer.EditedMediaItem.Builder(
+                        androidx.media3.common.MediaItem.fromUri(uri))
+                        .setEffects(new androidx.media3.transformer.Effects(
+                                Collections.emptyList(), Collections.singletonList(
+                                androidx.media3.effect.Presentation.createForHeight(
+                                        VIDEO_EXPORT_HEIGHT))))
+                        .build();
+        androidx.media3.transformer.DefaultEncoderFactory encoderFactory =
+                new androidx.media3.transformer.DefaultEncoderFactory.Builder(this)
+                        .setRequestedVideoEncoderSettings(
+                                new androidx.media3.transformer.VideoEncoderSettings.Builder()
+                                        .setBitrate(VIDEO_EXPORT_BITRATE)
+                                        .build())
+                        .setEnableFallback(true)
+                        .build();
+        androidx.media3.transformer.Transformer transformer =
+                new androidx.media3.transformer.Transformer.Builder(this)
+                        .setVideoMimeType(androidx.media3.common.MimeTypes.VIDEO_H264)
+                        .setAudioMimeType(androidx.media3.common.MimeTypes.AUDIO_AAC)
+                        .setEncoderFactory(encoderFactory)
+                        .addListener(new androidx.media3.transformer.Transformer.Listener() {
+                            @Override public void onCompleted(
+                                    androidx.media3.transformer.Composition composition,
+                                    androidx.media3.transformer.ExportResult result) {
+                                finishVideoCompression(preparing, destination, result.durationMs);
+                            }
+
+                            @Override public void onError(
+                                    androidx.media3.transformer.Composition composition,
+                                    androidx.media3.transformer.ExportResult result,
+                                    androidx.media3.transformer.ExportException exception) {
+                                failVideoCompression(messageId, destination, exception);
+                            }
+                        })
+                        .build();
+        activeVideoExports.put(messageId, transformer);
+        updateTransferProgress(messageId, 10, true);
+        transformer.start(edited, destination.getAbsolutePath());
+        scheduleVideoProgress(messageId, transformer);
+    }
+
+    /** Reads container and track metadata without decoding video frames. */
+    private VideoInfo inspectVideo(Uri uri) throws IOException {
+        long size = -1L;
+        try (android.content.res.AssetFileDescriptor descriptor =
+                     getContentResolver().openAssetFileDescriptor(uri, "r")) {
+            if (descriptor != null) size = descriptor.getLength();
+        }
+
+        int width = 0;
+        int height = 0;
+        int bitrate = 0;
+        long durationMs = 0L;
+        boolean h264 = false;
+        boolean compatibleAudio = true;
+        android.media.MediaExtractor extractor = new android.media.MediaExtractor();
+        try {
+            extractor.setDataSource(this, uri, null);
+            for (int index = 0; index < extractor.getTrackCount(); index++) {
+                android.media.MediaFormat format = extractor.getTrackFormat(index);
+                String mime = format.getString(android.media.MediaFormat.KEY_MIME);
+                if (mime == null) continue;
+                if (mime.startsWith("video/")) {
+                    h264 = android.media.MediaFormat.MIMETYPE_VIDEO_AVC.equals(mime);
+                    if (format.containsKey(android.media.MediaFormat.KEY_WIDTH)) {
+                        width = format.getInteger(android.media.MediaFormat.KEY_WIDTH);
+                    }
+                    if (format.containsKey(android.media.MediaFormat.KEY_HEIGHT)) {
+                        height = format.getInteger(android.media.MediaFormat.KEY_HEIGHT);
+                    }
+                    if (format.containsKey(android.media.MediaFormat.KEY_BIT_RATE)) {
+                        bitrate = format.getInteger(android.media.MediaFormat.KEY_BIT_RATE);
+                    }
+                    if (format.containsKey(android.media.MediaFormat.KEY_DURATION)) {
+                        durationMs = format.getLong(android.media.MediaFormat.KEY_DURATION) / 1_000L;
+                    }
+                } else if (mime.startsWith("audio/")) {
+                    compatibleAudio &= android.media.MediaFormat.MIMETYPE_AUDIO_AAC.equals(mime);
+                }
+            }
+        } finally {
+            extractor.release();
+        }
+        return new VideoInfo(size, width, height, bitrate, durationMs, h264, compatibleAudio);
+    }
+
+    private static final class VideoInfo {
+        final long size;
+        final int width;
+        final int height;
+        final int bitrate;
+        final long durationMs;
+        final boolean h264;
+        final boolean compatibleAudio;
+
+        VideoInfo(long size, int width, int height, int bitrate, long durationMs,
+                  boolean h264, boolean compatibleAudio) {
+            this.size = size;
+            this.width = width;
+            this.height = height;
+            this.bitrate = bitrate;
+            this.durationMs = durationMs;
+            this.h264 = h264;
+            this.compatibleAudio = compatibleAudio;
+        }
+
+        boolean canCopyWithoutTranscoding() {
+            int shortSide = Math.min(width, height);
+            int longSide = Math.max(width, height);
+            return size > 0 && size <= MAX_MEDIA_BYTES && h264 && compatibleAudio
+                    && shortSide > 0 && shortSide <= VIDEO_EXPORT_HEIGHT
+                    && longSide <= 1280 && bitrate > 0
+                    && bitrate <= VIDEO_EXPORT_BITRATE;
+        }
+    }
+
+    private void scheduleVideoProgress(String messageId,
+                                       androidx.media3.transformer.Transformer transformer) {
+        androidx.media3.transformer.ProgressHolder holder =
+                new androidx.media3.transformer.ProgressHolder();
+        Runnable task = new Runnable() {
+            @Override public void run() {
+                if (activeVideoExports.get(messageId) != transformer) return;
+                int state = transformer.getProgress(holder);
+                if (state == androidx.media3.transformer.Transformer.PROGRESS_STATE_AVAILABLE) {
+                    updateTransferProgress(messageId, 10 + holder.progress * 75 / 100, true);
+                }
+                videoExportHandler.postDelayed(this, 350L);
+            }
+        };
+        videoProgressTasks.put(messageId, task);
+        videoExportHandler.post(task);
+    }
+
+    private void finishVideoCompression(Message preparing, File destination, long durationMs) {
+        String messageId = preparing.getId();
+        clearVideoExport(messageId);
+        if (cancelledMedia.remove(messageId)) {
+            deleteFileQuietly(destination);
+            removeTransientMessage(messageId);
+            return;
+        }
+        updateTransferProgress(messageId, 90, true);
+        databaseExecutor.execute(() -> {
+            if (!destination.isFile() || destination.length() == 0
+                    || destination.length() > MAX_MEDIA_BYTES) {
+                deleteFileQuietly(destination);
+                runOnUiThread(() -> {
+                    removeTransientMessage(messageId);
+                    Toast.makeText(this, R.string.video_too_large, Toast.LENGTH_LONG).show();
+                });
+                return;
+            }
+            String thumbnail = MediaRepository.createThumbnail(destination.getAbsolutePath(), true);
+            MediaRepository.store(this, new MediaEntity(messageId,
+                    destination.getAbsolutePath(), "video/mp4", destination.length(), durationMs));
+            Message video = new Message(messageId, device.getId(), VIDEO_PREFIX + messageId + "|"
+                    + thumbnail, preparing.getTimestamp(), true, Message.Status.PENDING);
+            runOnUiThread(() -> {
+                if (cancelledMedia.remove(messageId)) {
+                    databaseExecutor.execute(() -> MediaRepository.delete(this, messageId));
+                    removeTransientMessage(messageId);
+                } else {
+                    updateTransferProgress(messageId, 100, true);
+                    queuePreparedMessage(video);
+                }
+            });
+        });
+    }
+
+    private void failVideoCompression(String messageId, File destination, Exception exception) {
+        clearVideoExport(messageId);
+        deleteFileQuietly(destination);
+        if (cancelledMedia.remove(messageId)) return;
+        Log.e(TAG, "Could not compress video", exception);
+        removeTransientMessage(messageId);
+        Toast.makeText(this, R.string.media_prepare_failed, Toast.LENGTH_LONG).show();
+    }
+
+    private void cancelVideoExport(String messageId, boolean deleteOutput) {
+        androidx.media3.transformer.Transformer transformer = activeVideoExports.remove(messageId);
+        if (transformer != null) transformer.cancel();
+        Runnable progress = videoProgressTasks.remove(messageId);
+        if (progress != null) videoExportHandler.removeCallbacks(progress);
+        File output = videoExportFiles.remove(messageId);
+        if (deleteOutput && output != null) deleteFileQuietly(output);
+    }
+
+    private void clearVideoExport(String messageId) {
+        activeVideoExports.remove(messageId);
+        Runnable progress = videoProgressTasks.remove(messageId);
+        if (progress != null) videoExportHandler.removeCallbacks(progress);
+        videoExportFiles.remove(messageId);
+    }
+
+    private static void deleteFileQuietly(File file) {
+        if (file.isFile() && !file.delete()) Log.w(TAG, "Could not remove video export");
     }
 
     private void removeTransientMessage(String messageId) {
@@ -2230,6 +2474,10 @@ public final class ChatActivity extends AppCompatActivity {
         locating = false;
         locationHandler.removeCallbacksAndMessages(null);
         recordingHandler.removeCallbacksAndMessages(null);
+        for (String messageId : new ArrayList<>(activeVideoExports.keySet())) {
+            cancelVideoExport(messageId, true);
+        }
+        videoExportHandler.removeCallbacksAndMessages(null);
         releasePlayer();
         databaseExecutor.shutdown();
         if (connectionManager != null) connectionManager.close();

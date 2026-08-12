@@ -8,6 +8,7 @@
     android:overScrollMode="never">
 
     <LinearLayout
+        android:id="@+id/mainContent"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_horizontal"
@@ -17,11 +18,28 @@
         android:paddingEnd="20dp"
         android:paddingBottom="20dp">
 
-        <ImageView
-            android:layout_width="72dp"
-            android:layout_height="72dp"
-            android:contentDescription="@string/app_name"
-            android:src="@drawable/splash_logo" />
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="72dp">
+
+            <ImageView
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:layout_gravity="center"
+                android:contentDescription="@string/app_name"
+                android:src="@drawable/splash_logo" />
+
+            <ImageButton
+                android:id="@+id/btnSettings"
+                android:layout_width="@dimen/touch_target"
+                android:layout_height="@dimen/touch_target"
+                android:layout_gravity="center_vertical|end"
+                android:background="@drawable/bg_settings_button"
+                android:contentDescription="@string/settings"
+                android:padding="@dimen/icon_padding"
+                android:src="@drawable/ic_settings"
+                android:tooltipText="@string/settings" />
+        </FrameLayout>
 
         <TextView
             android:id="@+id/txtTitle"

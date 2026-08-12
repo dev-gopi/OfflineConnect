@@ -11,6 +11,21 @@
     <string name="private_secure">Private by design · Messages stay on your devices</string>
     <string name="connecting_people">Secure peer-to-peer communication</string>
     <string name="loading">Preparing your connection…</string>
+    <string name="settings">Settings</string>
+    <string name="settings_description">Privacy and application security</string>
+    <string name="app_lock">App lock</string>
+    <string name="app_lock_description">Require your phone’s screen lock whenever Offline Connect starts.</string>
+    <string name="app_lock_privacy">Offline Connect never stores your PIN, pattern, password, or biometric data. Authentication is handled by Android.</string>
+    <string name="app_lock_status_enabled">Enabled · authentication required after startup</string>
+    <string name="app_lock_status_disabled">Disabled</string>
+    <string name="enable_app_lock">Enable app lock</string>
+    <string name="confirm_device_lock">Confirm your phone’s screen lock to protect Offline Connect.</string>
+    <string name="unlock_app">Unlock Offline Connect</string>
+    <string name="unlock_app_description">Confirm your identity to open your messages.</string>
+    <string name="device_lock_required">Set a PIN, pattern, or password in Android settings before enabling app lock.</string>
+    <string name="app_lock_unavailable">Android could not open the device authentication screen.</string>
+    <string name="app_lock_enabled_message">App lock enabled</string>
+    <string name="app_lock_not_enabled">App lock was not enabled</string>
 
     <string name="permission_required">Nearby-device permission is required.</string>
     <string name="scanning">Scanning for nearby devices…</string>
