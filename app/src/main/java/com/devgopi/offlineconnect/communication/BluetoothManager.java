@@ -3,6 +3,7 @@ package com.devgopi.offlineconnect.communication;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothClass;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.le.AdvertiseCallback;
 import android.bluetooth.le.AdvertiseData;
@@ -54,7 +55,7 @@ public final class BluetoothManager implements AutoCloseable {
             String action = intent.getAction();
             if (BluetoothDevice.ACTION_FOUND.equals(action)) {
                 BluetoothDevice peer = getBluetoothDevice(intent);
-                publishPeer(peer);
+                publishPeer(peer, false);
             } else if (BluetoothAdapter.ACTION_DISCOVERY_STARTED.equals(action)) {
                 listener.onDiscoveryChanged(true);
             } else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
@@ -65,7 +66,8 @@ public final class BluetoothManager implements AutoCloseable {
 
     private final ScanCallback scanCallback = new ScanCallback() {
         @Override public void onScanResult(int callbackType, ScanResult result) {
-            publishPeer(result.getDevice());
+            // The scan filter already verified Offline Connect's BLE service UUID.
+            publishPeer(result.getDevice(), true);
         }
 
         @Override public void onScanFailed(int errorCode) {
@@ -129,7 +131,7 @@ public final class BluetoothManager implements AutoCloseable {
 
     @SuppressLint("MissingPermission")
     private void publishBondedDevices() {
-        for (BluetoothDevice bonded : adapter.getBondedDevices()) publishPeer(bonded);
+        for (BluetoothDevice bonded : adapter.getBondedDevices()) publishPeer(bonded, false);
     }
 
     @SuppressLint("MissingPermission")
@@ -170,14 +172,23 @@ public final class BluetoothManager implements AutoCloseable {
     }
 
     @SuppressLint("MissingPermission") // Permission is checked before reading protected peer data.
-    private void publishPeer(BluetoothDevice peer) {
+    private void publishPeer(BluetoothDevice peer, boolean verifiedAppPeer) {
         if (peer == null || !hasConnectPermission()) return;
         try {
+            if (!verifiedAppPeer && !isPhone(peer)) return;
             listener.onDeviceFound(new Device(peer.getAddress(), peer.getName(),
                     Device.Transport.BLUETOOTH, false));
         } catch (SecurityException exception) {
             listener.onError(context.getString(R.string.bluetooth_permission_revoked));
         }
+    }
+
+    /** Classic discovery exposes a device class; only phone-class peers are useful here. */
+    @SuppressLint("MissingPermission")
+    private static boolean isPhone(BluetoothDevice peer) {
+        BluetoothClass deviceClass = peer.getBluetoothClass();
+        return deviceClass != null
+                && deviceClass.getMajorDeviceClass() == BluetoothClass.Device.Major.PHONE;
     }
 
     private void registerReceiver() {
