@@ -1,4 +1,93 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/devicesRoot"
     android:layout_width="match_parent"
-    android:layout_height="match_parent" />
+    android:layout_height="match_parent"
+    android:paddingStart="20dp"
+    android:paddingTop="28dp"
+    android:paddingEnd="20dp"
+    android:paddingBottom="20dp">
+
+    <TextView
+        android:id="@+id/txtDevicesTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/nearby_devices"
+        android:textAppearance="@style/TextAppearance.OfflineConnect.ScreenTitle" />
+
+    <TextView
+        android:id="@+id/txtDevicesDescription"
+        style="@style/TextAppearance.OfflineConnect.Body"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/txtDevicesTitle"
+        android:layout_marginTop="6dp"
+        android:text="@string/nearby_devices_description" />
+
+    <Button
+        android:id="@+id/btnScan"
+        style="@style/Widget.OfflineConnect.PrimaryButton"
+        android:layout_width="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:layout_centerHorizontal="true"
+        android:minWidth="240dp"
+        android:text="@string/scan" />
+
+    <LinearLayout
+        android:id="@+id/deviceListCard"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/txtDevicesDescription"
+        android:layout_above="@id/btnScan"
+        android:layout_marginTop="24dp"
+        android:layout_marginBottom="18dp"
+        android:background="@drawable/bg_card"
+        android:elevation="2dp"
+        android:orientation="vertical"
+        android:paddingTop="16dp">
+
+        <TextView
+            android:id="@+id/txtDiscoveryStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:background="@drawable/bg_status"
+            android:paddingStart="14dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="8dp"
+            android:text="@string/ready_to_scan"
+            android:textColor="@color/primary_dark"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/txtDevicesEmpty"
+            style="@style/TextAppearance.OfflineConnect.Body"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="12dp"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:padding="32dp"
+            android:text="@string/devices_empty"
+            android:textAlignment="center" />
+
+        <ListView
+            android:id="@+id/listDevices"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="12dp"
+            android:layout_weight="1"
+            android:clipToPadding="false"
+            android:contentDescription="@string/nearby_devices"
+            android:divider="@color/border"
+            android:dividerHeight="1dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="8dp"
+            tools:listitem="@layout/item_device" />
+    </LinearLayout>
+</RelativeLayout>

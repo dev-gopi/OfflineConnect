@@ -1,0 +1,111 @@
+<svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="512"
+        height="512"
+        viewBox="0 0 512 512">
+
+    <!-- Blue circular background -->
+    <circle
+            cx="256"
+            cy="256"
+            r="230"
+            fill="#1565C0"/>
+
+    <!-- White outer border -->
+    <circle
+            cx="256"
+            cy="256"
+            r="230"
+            fill="none"
+            stroke="#FFFFFF"
+            stroke-width="12"/>
+
+    <!-- Message bubble -->
+    <path
+            d="
+        M120 135
+        H365
+        C390 135 405 150 405 175
+        V290
+        C405 315 390 330 365 330
+        H245
+        L190 380
+        V330
+        H120
+        C95 330 80 315 80 290
+        V175
+        C80 150 95 135 120 135
+        Z"
+            fill="#FFFFFF"/>
+
+    <!-- Message line 1 -->
+    <rect
+            x="125"
+            y="185"
+            width="210"
+            height="14"
+            rx="7"
+            fill="#1565C0"/>
+
+    <!-- Message line 2 -->
+    <rect
+            x="125"
+            y="225"
+            width="180"
+            height="14"
+            rx="7"
+            fill="#1565C0"/>
+
+    <!-- Message line 3 -->
+    <rect
+            x="125"
+            y="265"
+            width="125"
+            height="14"
+            rx="7"
+            fill="#1565C0"/>
+
+    <!-- WiFi badge -->
+    <circle
+            cx="365"
+            cy="345"
+            r="92"
+            fill="#1565C0"
+            stroke="#FFFFFF"
+            stroke-width="12"/>
+
+    <!-- WiFi outer signal -->
+    <path
+            d="M305 325
+           Q365 270 425 325"
+            fill="none"
+            stroke="#FFFFFF"
+            stroke-width="15"
+            stroke-linecap="round"/>
+
+    <!-- WiFi middle signal -->
+    <path
+            d="M325 350
+           Q365 315 405 350"
+            fill="none"
+            stroke="#FFFFFF"
+            stroke-width="15"
+            stroke-linecap="round"/>
+
+    <!-- WiFi inner signal -->
+    <path
+            d="M345 375
+           Q365 357 385 375"
+            fill="none"
+            stroke="#FFFFFF"
+            stroke-width="15"
+            stroke-linecap="round"/>
+
+    <!-- WiFi dot -->
+    <circle
+            cx="365"
+            cy="399"
+            r="10"
+            fill="#FFFFFF"/>
+
+</svg>

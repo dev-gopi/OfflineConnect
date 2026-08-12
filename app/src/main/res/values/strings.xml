@@ -2,8 +2,52 @@
 
 <resources>
 
-    <string name="app_name">
-        Offline Connect
-    </string>
+    <string name="app_name">Offline Connect</string>
+    <string name="app_tagline">Stay connected, even without the internet.</string>
+    <string name="connection_ready">Ready for nearby connections</string>
+    <string name="connection_description">Discover trusted devices around you using Bluetooth and Wi‑Fi Direct.</string>
+    <string name="find_devices">Find nearby devices</string>
+    <string name="my_device">My device</string>
+    <string name="private_secure">Private by design · Messages stay on your devices</string>
+    <string name="connecting_people">Secure peer-to-peer communication</string>
+    <string name="loading">Preparing your connection…</string>
+
+    <string name="permission_required">Nearby-device permission is required.</string>
+    <string name="scanning">Scanning for nearby devices…</string>
+    <string name="scan_complete">Scan complete</string>
+    <string name="scan_failed">Unable to scan on this device. Check Bluetooth, Wi‑Fi, and permissions.</string>
+    <string name="wifi_direct_busy">Wi‑Fi Direct is busy. Bluetooth scanning will continue; try again shortly.</string>
+    <string name="wifi_direct_unsupported">Wi‑Fi Direct is not supported on this device.</string>
+    <string name="wifi_disabled">Wi‑Fi is off. Turn it on to discover Wi‑Fi Direct devices.</string>
+    <string name="ready_to_scan">Ready to scan</string>
+    <string name="scan">Scan nearby devices</string>
+    <string name="nearby_devices">Nearby devices</string>
+    <string name="nearby_devices_description">Choose a device to start a secure local connection.</string>
+    <string name="devices_empty">Nearby devices will appear here after scanning.</string>
+    <string name="invalid_device">The selected device is unavailable.</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="connect">Connect</string>
+    <string name="message_hint">Message</string>
+    <string name="send">Send</string>
+    <string name="messaging_protocol_pending">Message transport is not configured yet.</string>
+    <string name="conversation">Conversation</string>
+    <string name="conversation_empty">Your messages with this device will appear here.</string>
+    <string name="record_voice">Hold to record voice message</string>
+    <string name="send_message">Send message</string>
+    <string name="recording_voice">Recording… release to send</string>
+    <string name="swipe_right_cancel">Swipe right to cancel</string>
+    <string name="recording_cancelled">Voice message cancelled</string>
+    <string name="microphone_permission">Microphone permission is required for voice messages.</string>
+    <string name="recording_failed">Unable to record a voice message.</string>
+    <string name="play_voice">Play voice message</string>
+    <string name="pause_voice">Pause voice message</string>
+    <string name="receipt_pending">Queued</string>
+    <string name="receipt_sent">Sent</string>
+    <string name="receipt_delivered">Delivered</string>
+    <string name="receipt_read">Read</string>
+    <string name="receipt_failed">Failed</string>
+    <string name="receipt_received">Received</string>
+    <string name="retry">Retry</string>
+    <string name="retry_message">Retry failed message</string>
 
 </resources>
