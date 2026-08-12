@@ -7,8 +7,9 @@ build/
 # Local Android SDK configuration
 local.properties
 
-# Android Studio and IntelliJ IDEA
+# Android Studio and IntelliJ IDEA And Visual Studio Code
 .idea/
+.vscode/
 *.iml
 
 # Native build output
