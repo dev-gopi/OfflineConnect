@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center_horizontal"
+    android:padding="24dp">
+
+    <TextView
+        android:id="@+id/txtTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/app_name"
+        android:textSize="30sp"
+        android:textStyle="bold"
+        android:layout_marginTop="70dp" />
+
+    <TextView
+        android:id="@+id/txtSubtitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Communicate without Internet"
+        android:textSize="17sp"
+        android:layout_marginTop="8dp" />
+
+    <TextView
+        android:id="@+id/txtStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Status: Not connected"
+        android:textSize="16sp"
+        android:gravity="center"
+        android:layout_marginTop="60dp"
+        android:padding="16dp" />
+
+    <Button
+        android:id="@+id/btnFindDevices"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Find Nearby Devices"
+        android:layout_marginTop="30dp" />
+
+    <Button
+        android:id="@+id/btnMyDevice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="My Device"
+        android:layout_marginTop="12dp" />
+
+    <TextView
+        android:id="@+id/txtInfo"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Bluetooth / Wi-Fi communication will be added next."
+        android:textSize="14sp"
+        android:gravity="center"
+        android:layout_marginTop="40dp" />
+
+</LinearLayout>
