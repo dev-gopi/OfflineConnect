@@ -38,6 +38,8 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.HapticFeedbackConstants;
+import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageButton;
@@ -363,6 +365,7 @@ public final class ChatActivity extends AppCompatActivity {
 
     /** Displays a categorized emoji keyboard backed entirely by app resources. */
     private void showEmojiKeyboard() {
+        closeSystemKeyboard();
         String[] emojis = getResources().getStringArray(R.array.chat_emoji);
         String[] categoryIcons = getResources().getStringArray(R.array.emoji_category_icons);
         String[] categoryLabels = getResources().getStringArray(R.array.emoji_category_labels);
@@ -437,11 +440,30 @@ public final class ChatActivity extends AppCompatActivity {
         actions.addView(backspace, new LinearLayout.LayoutParams(dp(48), dp(44)));
         content.addView(actions);
 
-        new AlertDialog.Builder(this, R.style.ThemeOverlay_OfflineConnect_Dialog)
+        AlertDialog dialog = new AlertDialog.Builder(this,
+                R.style.ThemeOverlay_OfflineConnect_Dialog)
                 .setTitle(R.string.emoji_keyboard)
                 .setView(content)
                 .setNegativeButton(R.string.close, null)
-                .show();
+                .create();
+        dialog.setOnShowListener(ignored -> {
+            if (dialog.getWindow() != null) {
+                dialog.getWindow().setSoftInputMode(
+                        WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
+            }
+        });
+        dialog.show();
+    }
+
+    /** Prevents the system IME from remaining behind or resizing the emoji dialog. */
+    private void closeSystemKeyboard() {
+        InputMethodManager keyboard = getSystemService(InputMethodManager.class);
+        View focused = getCurrentFocus();
+        View tokenOwner = focused != null ? focused : messageInput;
+        if (keyboard != null && tokenOwner != null) {
+            keyboard.hideSoftInputFromWindow(tokenOwner.getWindowToken(), 0);
+        }
+        if (focused != null) focused.clearFocus();
     }
 
     private void populateEmojiGrid(GridLayout keys, String[] emojis, int start, int end,
